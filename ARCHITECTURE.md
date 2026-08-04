@@ -82,6 +82,7 @@ redis-from-scratch/
 │   ├── server/
 │   │   └── tcpServer.ts        # Owns the net.Server, connection lifecycle, socket <-> parser/dispatcher wiring
 │   ├── protocol/
+│   │   ├── respTypes.ts        # Shared RespValue type + constructor helpers used by both below
 │   │   ├── respParser.ts       # Streaming RESP decoder: bytes in, parsed commands out
 │   │   └── respSerializer.ts   # Encodes command results/errors into RESP wire format
 │   ├── store/
@@ -101,16 +102,21 @@ redis-from-scratch/
 │   │   └── index.ts            # Shared TypeScript types/interfaces used across modules
 │   └── index.ts                # Entry point: reads config, boots the TCP server
 ├── test/
-│   ├── unit/
-│   │   └── .gitkeep             # Per-module unit tests (mirrors src/ structure)
-│   ├── integration/
-│   │   └── .gitkeep             # Spins up the real server, talks to it over a real socket
+│   ├── unit/                    # Per-module unit tests (mirrors src/ structure)
+│   │   ├── protocol/
+│   │   │   ├── respParser.test.ts
+│   │   │   ├── respSerializer.test.ts
+│   │   │   └── respRoundTrip.test.ts
+│   │   └── config.test.ts
+│   ├── integration/             # Spins up the real server, talks to it over a real socket
+│   │   └── tcpServer.test.ts
 │   └── benchmark/
 │       └── .gitkeep             # Scripts comparing this server's throughput/latency to real Redis
 ├── ARCHITECTURE.md
 ├── README.md
 ├── package.json
 ├── tsconfig.json
+├── vitest.config.ts
 ├── eslint.config.mjs
 ├── .prettierrc.json
 ├── .prettierignore
@@ -194,8 +200,13 @@ every chunk. Nothing below is implemented yet except where marked.
       port (`PORT` env var, default 6379), accepts concurrent connections,
       logs + echoes raw bytes (no RESP parsing yet), cleans up on client
       disconnect, and shuts down gracefully on SIGINT/SIGTERM
-- [ ] RESP protocol parser
-- [ ] RESP protocol serializer
+- [x] RESP protocol parser (`feature/resp-protocol`) — streaming decoder
+      for simple strings, errors, integers, bulk strings (incl. null),
+      and arrays (incl. null); buffers correctly across fragmented/partial
+      TCP reads and handles multiple pipelined values in one chunk
+- [x] RESP protocol serializer (`feature/resp-protocol`) — encodes all of
+      the above back to wire format; not yet wired into the TCP server
+      (still echo-only) — that wiring is the next chunk
 - [ ] In-memory data store core (get/set primitives)
 - [ ] Command dispatcher + command table
 
