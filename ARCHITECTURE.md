@@ -190,7 +190,10 @@ every chunk. Nothing below is implemented yet except where marked.
 ### Foundation
 
 - [x] Repo scaffolding, `ARCHITECTURE.md`, tooling config (this chunk)
-- [ ] TCP server skeleton (`feature/tcp-server`)
+- [x] TCP server skeleton (`feature/tcp-server`) — listens on a configurable
+      port (`PORT` env var, default 6379), accepts concurrent connections,
+      logs + echoes raw bytes (no RESP parsing yet), cleans up on client
+      disconnect, and shuts down gracefully on SIGINT/SIGTERM
 - [ ] RESP protocol parser
 - [ ] RESP protocol serializer
 - [ ] In-memory data store core (get/set primitives)
