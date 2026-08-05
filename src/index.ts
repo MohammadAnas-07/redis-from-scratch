@@ -1,12 +1,16 @@
 // Entry point: reads config and boots the TCP server.
+import { dispatch } from './commands/dispatcher.js';
 import { loadConfig } from './config/config.js';
 import { TcpServer } from './server/tcpServer.js';
+import { DataStore } from './store/dataStore.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
+  const store = new DataStore();
   const server = new TcpServer({
     port: config.port,
     log: (message) => console.log(`[tcp] ${message}`),
+    dispatch: (request) => dispatch(store, request),
   });
 
   await server.listen();
