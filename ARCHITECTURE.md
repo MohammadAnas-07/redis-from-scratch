@@ -107,9 +107,14 @@ redis-from-scratch/
 │   │   │   ├── respParser.test.ts
 │   │   │   ├── respSerializer.test.ts
 │   │   │   └── respRoundTrip.test.ts
+│   │   ├── store/
+│   │   │   └── dataStore.test.ts
+│   │   ├── commands/
+│   │   │   └── dispatcher.test.ts
 │   │   └── config.test.ts
 │   ├── integration/             # Spins up the real server, talks to it over a real socket
-│   │   └── tcpServer.test.ts
+│   │   ├── tcpServer.test.ts    # Transport/connection-lifecycle behavior
+│   │   └── coreCommands.test.ts # Real RESP commands end-to-end (PING/SET/GET/DEL/EXISTS)
 │   └── benchmark/
 │       └── .gitkeep             # Scripts comparing this server's throughput/latency to real Redis
 ├── ARCHITECTURE.md
@@ -198,22 +203,35 @@ every chunk. Nothing below is implemented yet except where marked.
 - [x] Repo scaffolding, `ARCHITECTURE.md`, tooling config (this chunk)
 - [x] TCP server skeleton (`feature/tcp-server`) — listens on a configurable
       port (`PORT` env var, default 6379), accepts concurrent connections,
-      logs + echoes raw bytes (no RESP parsing yet), cleans up on client
-      disconnect, and shuts down gracefully on SIGINT/SIGTERM
+      cleans up on client disconnect, and shuts down gracefully on
+      SIGINT/SIGTERM. Originally echo-only; now parses RESP and dispatches
+      commands instead (see `feature/core-commands` below)
 - [x] RESP protocol parser (`feature/resp-protocol`) — streaming decoder
       for simple strings, errors, integers, bulk strings (incl. null),
       and arrays (incl. null); buffers correctly across fragmented/partial
       TCP reads and handles multiple pipelined values in one chunk
 - [x] RESP protocol serializer (`feature/resp-protocol`) — encodes all of
-      the above back to wire format; not yet wired into the TCP server
-      (still echo-only) — that wiring is the next chunk
-- [ ] In-memory data store core (get/set primitives)
-- [ ] Command dispatcher + command table
+      the above back to wire format
+- [x] In-memory data store core (`feature/core-commands`) — `DataStore`
+      class, plain `Map` under the hood, decoupled from the dispatcher.
+      Supports string get/set/del/exists; SET records an absolute
+      `expiresAt` timestamp but nothing enforces it yet (expiry engine,
+      still below, is a later chunk)
+- [x] Command dispatcher + command table (`feature/core-commands`) — RESP
+      parser/serializer wired into the TCP server; `dispatch()` validates
+      request shape and arity, looks up the command table, and returns a
+      RespValue reply. First commands wired: PING, SET (EX/PX only), GET,
+      DEL, EXISTS
 
 ### Command groups
 
-- [ ] String commands (GET, SET, APPEND, INCR/DECR, ...)
-- [ ] Key commands (DEL, EXISTS, EXPIRE, TTL, KEYS, TYPE, ...)
+- [ ] String commands (GET, SET, APPEND, INCR/DECR, ...) — GET and SET
+      (EX/PX only) done in `feature/core-commands`; APPEND/INCR/DECR/other
+      SET options (NX, XX, ...) still pending
+- [ ] Key commands (DEL, EXISTS, EXPIRE, TTL, KEYS, TYPE, ...) — DEL and
+      EXISTS done in `feature/core-commands`; EXPIRE/TTL/KEYS/TYPE still
+      pending (this is also where SET's stored `expiresAt` will start
+      being enforced)
 - [ ] Hash commands (HSET, HGET, HDEL, HGETALL, ...)
 - [ ] List commands (LPUSH, RPUSH, LPOP, RPOP, LRANGE, ...)
 - [ ] Set commands (SADD, SREM, SMEMBERS, SINTER, ...)

@@ -1,8 +1,15 @@
 // Owns the net.Server, connection lifecycle, and socket <-> parser/dispatcher wiring.
 //
-// For this chunk there is no RESP parsing yet: incoming bytes are logged and
-// echoed straight back. The parser/dispatcher will be wired in here later.
+// Each connection gets its own RespParser to buffer/decode incoming bytes.
+// Every complete RESP value that comes off it is handed to the injected
+// `dispatch` callback, and the RespValue it returns is encoded straight
+// back to the socket. The server itself knows nothing about commands or
+// the data store — that's the caller's `dispatch` function (see
+// src/commands/dispatcher.ts and src/index.ts for the real wiring).
 import net from 'node:net';
+import { RespParser } from '../protocol/respParser.js';
+import { encodeResp } from '../protocol/respSerializer.js';
+import { error, RespProtocolError, type RespValue } from '../protocol/respTypes.js';
 
 export type Logger = (message: string) => void;
 
@@ -11,6 +18,8 @@ export interface TcpServerOptions {
   port: number;
   host?: string;
   log?: Logger;
+  /** Handles one parsed RESP request and returns the RespValue reply to send back. */
+  dispatch: (request: RespValue) => RespValue;
 }
 
 export class TcpServer {
@@ -19,11 +28,13 @@ export class TcpServer {
   private readonly port: number;
   private readonly host: string;
   private readonly log: Logger;
+  private readonly dispatch: (request: RespValue) => RespValue;
 
   constructor(options: TcpServerOptions) {
     this.port = options.port;
     this.host = options.host ?? '0.0.0.0';
     this.log = options.log ?? (() => {});
+    this.dispatch = options.dispatch;
 
     this.server = net.createServer((socket) => this.handleConnection(socket));
 
@@ -40,9 +51,24 @@ export class TcpServer {
     const remote = `${socket.remoteAddress}:${socket.remotePort}`;
     this.log(`client connected: ${remote}`);
 
+    const parser = new RespParser();
+
     socket.on('data', (data: Buffer) => {
-      this.log(`received ${data.length} bytes from ${remote}: ${data.toString('utf8')}`);
-      socket.write(data);
+      let requests: RespValue[];
+      try {
+        requests = parser.push(data);
+      } catch (err) {
+        const message = err instanceof RespProtocolError ? err.message : 'internal error';
+        this.log(`protocol error from ${remote}: ${message}`);
+        socket.write(encodeResp(error(`ERR Protocol error: ${message}`)));
+        socket.destroy();
+        return;
+      }
+
+      for (const request of requests) {
+        const reply = this.dispatch(request);
+        socket.write(encodeResp(reply));
+      }
     });
 
     socket.on('close', () => {

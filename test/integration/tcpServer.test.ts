@@ -1,8 +1,13 @@
-// Integration tests: spin up a real TcpServer on an ephemeral port and talk
-// to it over an actual TCP socket, the same way a real client would.
+// Integration tests: spin up a real TcpServer (wired to the real dispatcher
+// + a fresh DataStore, exactly like src/index.ts does) on an ephemeral port
+// and talk to it over an actual TCP socket, the same way a real client
+// would. These tests focus on transport/connection-lifecycle behavior;
+// full command semantics are covered in test/integration/coreCommands.test.ts.
 import net from 'node:net';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { dispatch } from '../../src/commands/dispatcher.js';
 import { TcpServer } from '../../src/server/tcpServer.js';
+import { DataStore } from '../../src/store/dataStore.js';
 
 function connect(port: number): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
@@ -33,7 +38,12 @@ describe('TcpServer', () => {
   let port: number;
 
   beforeEach(async () => {
-    server = new TcpServer({ port: 0, host: '127.0.0.1' });
+    const store = new DataStore();
+    server = new TcpServer({
+      port: 0,
+      host: '127.0.0.1',
+      dispatch: (request) => dispatch(store, request),
+    });
     await server.listen();
     port = getPort(server);
   });
@@ -55,23 +65,25 @@ describe('TcpServer', () => {
     for (const socket of sockets) socket.destroy();
   });
 
-  it('echoes back raw bytes it receives', async () => {
+  it('parses a RESP command off the wire and replies with an encoded RESP value', async () => {
     const socket = await connect(port);
     const received = once(socket, 'data');
-    socket.write('PING\r\n');
+    // PING as a RESP array of bulk strings: *1\r\n$4\r\nPING\r\n
+    socket.write('*1\r\n$4\r\nPING\r\n');
     const data = await received;
-    expect(data.toString('utf8')).toBe('PING\r\n');
+    expect(data.toString('utf8')).toBe('+PONG\r\n');
     socket.destroy();
   });
 
-  it('echoes each client independently', async () => {
+  it('handles each concurrent client independently', async () => {
     const [a, b] = await Promise.all([connect(port), connect(port)]);
     const aData = once(a, 'data');
     const bData = once(b, 'data');
-    a.write('from-a');
-    b.write('from-b');
-    expect((await aData).toString('utf8')).toBe('from-a');
-    expect((await bData).toString('utf8')).toBe('from-b');
+    // PING <message> replies with that message as a bulk string.
+    a.write('*2\r\n$4\r\nPING\r\n$6\r\nfrom-a\r\n');
+    b.write('*2\r\n$4\r\nPING\r\n$6\r\nfrom-b\r\n');
+    expect((await aData).toString('utf8')).toBe('$6\r\nfrom-a\r\n');
+    expect((await bData).toString('utf8')).toBe('$6\r\nfrom-b\r\n');
     a.destroy();
     b.destroy();
   });
@@ -115,5 +127,15 @@ describe('TcpServer', () => {
     await server.close();
     await closed;
     expect(server.connectionCount).toBe(0);
+  });
+
+  it('sends a RESP protocol error and closes the connection on malformed input', async () => {
+    const socket = await connect(port);
+    const received = once(socket, 'data');
+    const closed = once(socket, 'close');
+    socket.write('*1\r\n$4\r\nPING\r\nGARBAGE-NOT-RESP');
+    const data = await received;
+    expect(data.toString('utf8')).toMatch(/^-ERR Protocol error:/);
+    await closed;
   });
 });
