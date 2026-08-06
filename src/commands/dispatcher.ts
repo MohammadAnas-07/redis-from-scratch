@@ -36,6 +36,12 @@ const COMMANDS: Record<string, CommandDefinition> = {
   RPOP: { minArgs: 1, maxArgs: 1, handler: handleRpop },
   LRANGE: { minArgs: 3, maxArgs: 3, handler: handleLrange },
   LLEN: { minArgs: 1, maxArgs: 1, handler: handleLlen },
+  HSET: { minArgs: 3, maxArgs: null, handler: handleHset },
+  HGET: { minArgs: 2, maxArgs: 2, handler: handleHget },
+  HDEL: { minArgs: 2, maxArgs: null, handler: handleHdel },
+  HGETALL: { minArgs: 1, maxArgs: 1, handler: handleHgetall },
+  HEXISTS: { minArgs: 2, maxArgs: 2, handler: handleHexists },
+  HLEN: { minArgs: 1, maxArgs: 1, handler: handleHlen },
 };
 
 /**
@@ -213,4 +219,75 @@ function handleLlen(store: DataStore, args: string[]): RespValue {
     return error("ERR wrong number of arguments for 'llen' command");
   }
   return integer(store.llen(key));
+}
+
+function handleHset(store: DataStore, args: string[]): RespValue {
+  const key = args[0];
+  if (key === undefined) {
+    return error("ERR wrong number of arguments for 'hset' command");
+  }
+
+  const rest = args.slice(1);
+  if (rest.length === 0 || rest.length % 2 !== 0) {
+    return error("ERR wrong number of arguments for 'hset' command");
+  }
+
+  const fields: Array<[string, string]> = [];
+  for (let i = 0; i < rest.length; i += 2) {
+    const field = rest[i];
+    const value = rest[i + 1];
+    if (field === undefined || value === undefined) {
+      return error("ERR wrong number of arguments for 'hset' command");
+    }
+    fields.push([field, value]);
+  }
+
+  return integer(store.hset(key, fields));
+}
+
+function handleHget(store: DataStore, args: string[]): RespValue {
+  const key = args[0];
+  const field = args[1];
+  if (key === undefined || field === undefined) {
+    return error("ERR wrong number of arguments for 'hget' command");
+  }
+  return bulkString(store.hget(key, field));
+}
+
+function handleHdel(store: DataStore, args: string[]): RespValue {
+  const key = args[0];
+  if (key === undefined) {
+    return error("ERR wrong number of arguments for 'hdel' command");
+  }
+  return integer(store.hdel(key, args.slice(1)));
+}
+
+function handleHgetall(store: DataStore, args: string[]): RespValue {
+  const key = args[0];
+  if (key === undefined) {
+    return error("ERR wrong number of arguments for 'hgetall' command");
+  }
+
+  const flat: RespValue[] = [];
+  for (const [field, value] of store.hgetall(key)) {
+    flat.push(bulkString(field), bulkString(value));
+  }
+  return array(flat);
+}
+
+function handleHexists(store: DataStore, args: string[]): RespValue {
+  const key = args[0];
+  const field = args[1];
+  if (key === undefined || field === undefined) {
+    return error("ERR wrong number of arguments for 'hexists' command");
+  }
+  return integer(store.hexists(key, field) ? 1 : 0);
+}
+
+function handleHlen(store: DataStore, args: string[]): RespValue {
+  const key = args[0];
+  if (key === undefined) {
+    return error("ERR wrong number of arguments for 'hlen' command");
+  }
+  return integer(store.hlen(key));
 }

@@ -337,6 +337,132 @@ describe('dispatch', () => {
     });
   });
 
+  describe('HSET / HGET', () => {
+    it('HSET creates a hash and returns the number of new fields', () => {
+      const store = new DataStore();
+      expect(dispatch(store, cmd('HSET', 'myhash', 'field1', 'a'))).toEqual(integer(1));
+    });
+
+    it('HSET returns 0 when overwriting only existing fields', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('HSET', 'myhash', 'field1', 'a'));
+      expect(dispatch(store, cmd('HSET', 'myhash', 'field1', 'b'))).toEqual(integer(0));
+    });
+
+    it('HSET accepts multiple field/value pairs in one call', () => {
+      const store = new DataStore();
+      expect(dispatch(store, cmd('HSET', 'myhash', 'field1', 'a', 'field2', 'b'))).toEqual(
+        integer(2),
+      );
+    });
+
+    it('HGET returns the stored value', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('HSET', 'myhash', 'field1', 'a'));
+      expect(dispatch(store, cmd('HGET', 'myhash', 'field1'))).toEqual(bulkString('a'));
+    });
+
+    it('HGET returns a null bulk string for a missing field or key', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('HSET', 'myhash', 'field1', 'a'));
+      expect(dispatch(store, cmd('HGET', 'myhash', 'missing'))).toEqual(bulkString(null));
+      expect(dispatch(store, cmd('HGET', 'missing', 'field1'))).toEqual(bulkString(null));
+    });
+
+    it('HSET rejects an odd number of field/value tokens', () => {
+      const store = new DataStore();
+      expect(dispatch(store, cmd('HSET', 'myhash', 'field1', 'a', 'field2')).type).toBe('error');
+    });
+
+    it('returns WRONGTYPE on a string key', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SET', 'foo', 'bar'));
+      const expected = {
+        type: 'error',
+        value: 'WRONGTYPE Operation against a key holding the wrong kind of value',
+      };
+      expect(dispatch(store, cmd('HSET', 'foo', 'field1', 'a'))).toEqual(expected);
+      expect(dispatch(store, cmd('HGET', 'foo', 'field1'))).toEqual(expected);
+    });
+  });
+
+  describe('HDEL', () => {
+    it('deletes existing fields and returns the count removed', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('HSET', 'myhash', 'field1', 'a', 'field2', 'b'));
+      expect(dispatch(store, cmd('HDEL', 'myhash', 'field1', 'missing'))).toEqual(integer(1));
+    });
+
+    it('removes the key once the hash empties, reflected in EXISTS', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('HSET', 'myhash', 'only', 'a'));
+      dispatch(store, cmd('HDEL', 'myhash', 'only'));
+      expect(dispatch(store, cmd('EXISTS', 'myhash'))).toEqual(integer(0));
+    });
+
+    it('returns WRONGTYPE on a string key', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SET', 'foo', 'bar'));
+      expect(dispatch(store, cmd('HDEL', 'foo', 'field1')).type).toBe('error');
+    });
+  });
+
+  describe('HGETALL', () => {
+    it('returns all fields and values as a flat array', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('HSET', 'myhash', 'field1', 'a', 'field2', 'b'));
+      expect(dispatch(store, cmd('HGETALL', 'myhash'))).toEqual(
+        array([bulkString('field1'), bulkString('a'), bulkString('field2'), bulkString('b')]),
+      );
+    });
+
+    it('returns an empty array for a missing key', () => {
+      const store = new DataStore();
+      expect(dispatch(store, cmd('HGETALL', 'missing'))).toEqual(array([]));
+    });
+
+    it('returns WRONGTYPE on a string key', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SET', 'foo', 'bar'));
+      expect(dispatch(store, cmd('HGETALL', 'foo')).type).toBe('error');
+    });
+  });
+
+  describe('HEXISTS', () => {
+    it('returns 1 for an existing field and 0 otherwise', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('HSET', 'myhash', 'field1', 'a'));
+      expect(dispatch(store, cmd('HEXISTS', 'myhash', 'field1'))).toEqual(integer(1));
+      expect(dispatch(store, cmd('HEXISTS', 'myhash', 'missing'))).toEqual(integer(0));
+      expect(dispatch(store, cmd('HEXISTS', 'missing', 'field1'))).toEqual(integer(0));
+    });
+
+    it('returns WRONGTYPE on a string key', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SET', 'foo', 'bar'));
+      expect(dispatch(store, cmd('HEXISTS', 'foo', 'field1')).type).toBe('error');
+    });
+  });
+
+  describe('HLEN', () => {
+    it('returns the number of fields', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('HSET', 'myhash', 'field1', 'a', 'field2', 'b'));
+      expect(dispatch(store, cmd('HLEN', 'myhash'))).toEqual(integer(2));
+    });
+
+    it('returns 0 for a missing key', () => {
+      const store = new DataStore();
+      expect(dispatch(store, cmd('HLEN', 'missing'))).toEqual(integer(0));
+    });
+
+    it('returns WRONGTYPE on a string key', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SET', 'foo', 'bar'));
+      expect(dispatch(store, cmd('HLEN', 'foo')).type).toBe('error');
+    });
+  });
+
   describe('cross-type errors surfaced through dispatch', () => {
     it('GET on a list key returns WRONGTYPE', () => {
       const store = new DataStore();
@@ -345,6 +471,27 @@ describe('dispatch', () => {
         type: 'error',
         value: 'WRONGTYPE Operation against a key holding the wrong kind of value',
       });
+    });
+
+    it('GET on a hash key returns WRONGTYPE', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('HSET', 'myhash', 'field1', 'a'));
+      expect(dispatch(store, cmd('GET', 'myhash'))).toEqual({
+        type: 'error',
+        value: 'WRONGTYPE Operation against a key holding the wrong kind of value',
+      });
+    });
+
+    it('LPUSH on a hash key returns WRONGTYPE', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('HSET', 'myhash', 'field1', 'a'));
+      expect(dispatch(store, cmd('LPUSH', 'myhash', 'x')).type).toBe('error');
+    });
+
+    it('HSET on a list key returns WRONGTYPE', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('RPUSH', 'mylist', 'a'));
+      expect(dispatch(store, cmd('HSET', 'mylist', 'field1', 'a')).type).toBe('error');
     });
   });
 });
