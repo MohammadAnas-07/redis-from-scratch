@@ -116,7 +116,8 @@ redis-from-scratch/
 │   │   ├── tcpServer.test.ts    # Transport/connection-lifecycle behavior
 │   │   ├── coreCommands.test.ts # Real RESP commands end-to-end (PING/SET/GET/DEL/EXISTS)
 │   │   ├── listCommands.test.ts # Real RESP list commands end-to-end, incl. WRONGTYPE
-│   │   └── hashCommands.test.ts # Real RESP hash commands end-to-end, incl. WRONGTYPE
+│   │   ├── hashCommands.test.ts # Real RESP hash commands end-to-end, incl. WRONGTYPE
+│   │   └── setCommands.test.ts  # Real RESP set commands end-to-end, incl. WRONGTYPE
 │   └── benchmark/
 │       └── .gitkeep             # Scripts comparing this server's throughput/latency to real Redis
 ├── ARCHITECTURE.md
@@ -251,7 +252,15 @@ every chunk. Nothing below is implemented yet except where marked.
       real Redis. Operating on a key of the wrong type (e.g. LPUSH on a
       string, or GET on a list) returns a real-Redis-style `WRONGTYPE`
       error instead of silently coercing or crashing
-- [ ] Set commands (SADD, SREM, SMEMBERS, SINTER, ...)
+- [x] Set commands (SADD, SREM, SMEMBERS, SISMEMBER, SCARD) — all five
+      done in `feature/sets`, backed by a new `SetEntry` type in
+      `DataStore` (a `Set<string>` per key) alongside
+      `StringEntry`/`ListEntry`/`HashEntry`. SADD returns the count of
+      _newly added_ members, matching the HSET precedent. A key is
+      removed once SREM empties its set. SINTER/SUNION/SDIFF/SPOP/etc.
+      still pending. Reuses the same centralized WRONGTYPE mechanism as
+      Lists and Hashes unchanged — third data type in a row that needed
+      zero changes to `dispatch()`'s error handling
 - [ ] Sorted set commands (ZADD, ZRANGE, ZSCORE, ...)
 
 ### Core engine features

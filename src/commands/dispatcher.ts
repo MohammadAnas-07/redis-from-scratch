@@ -42,6 +42,11 @@ const COMMANDS: Record<string, CommandDefinition> = {
   HGETALL: { minArgs: 1, maxArgs: 1, handler: handleHgetall },
   HEXISTS: { minArgs: 2, maxArgs: 2, handler: handleHexists },
   HLEN: { minArgs: 1, maxArgs: 1, handler: handleHlen },
+  SADD: { minArgs: 2, maxArgs: null, handler: handleSadd },
+  SREM: { minArgs: 2, maxArgs: null, handler: handleSrem },
+  SMEMBERS: { minArgs: 1, maxArgs: 1, handler: handleSmembers },
+  SISMEMBER: { minArgs: 2, maxArgs: 2, handler: handleSismember },
+  SCARD: { minArgs: 1, maxArgs: 1, handler: handleScard },
 };
 
 /**
@@ -290,4 +295,45 @@ function handleHlen(store: DataStore, args: string[]): RespValue {
     return error("ERR wrong number of arguments for 'hlen' command");
   }
   return integer(store.hlen(key));
+}
+
+function handleSadd(store: DataStore, args: string[]): RespValue {
+  const key = args[0];
+  if (key === undefined) {
+    return error("ERR wrong number of arguments for 'sadd' command");
+  }
+  return integer(store.sadd(key, args.slice(1)));
+}
+
+function handleSrem(store: DataStore, args: string[]): RespValue {
+  const key = args[0];
+  if (key === undefined) {
+    return error("ERR wrong number of arguments for 'srem' command");
+  }
+  return integer(store.srem(key, args.slice(1)));
+}
+
+function handleSmembers(store: DataStore, args: string[]): RespValue {
+  const key = args[0];
+  if (key === undefined) {
+    return error("ERR wrong number of arguments for 'smembers' command");
+  }
+  return array(store.smembers(key).map((member) => bulkString(member)));
+}
+
+function handleSismember(store: DataStore, args: string[]): RespValue {
+  const key = args[0];
+  const member = args[1];
+  if (key === undefined || member === undefined) {
+    return error("ERR wrong number of arguments for 'sismember' command");
+  }
+  return integer(store.sismember(key, member) ? 1 : 0);
+}
+
+function handleScard(store: DataStore, args: string[]): RespValue {
+  const key = args[0];
+  if (key === undefined) {
+    return error("ERR wrong number of arguments for 'scard' command");
+  }
+  return integer(store.scard(key));
 }
