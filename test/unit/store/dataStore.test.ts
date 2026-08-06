@@ -439,6 +439,139 @@ describe('DataStore', () => {
     });
   });
 
+  describe('sets', () => {
+    describe('sadd', () => {
+      it('creates a set and returns how many members were newly added', () => {
+        const store = new DataStore();
+        expect(store.sadd('myset', ['a', 'b'])).toBe(2);
+      });
+
+      it('does not count an already-present member as newly added', () => {
+        const store = new DataStore();
+        store.sadd('myset', ['a']);
+        expect(store.sadd('myset', ['a'])).toBe(0);
+      });
+
+      it('counts a mix of new and duplicate members correctly', () => {
+        const store = new DataStore();
+        store.sadd('myset', ['a']);
+        expect(store.sadd('myset', ['a', 'b', 'c'])).toBe(2);
+      });
+
+      it('de-duplicates members added within the same call', () => {
+        const store = new DataStore();
+        expect(store.sadd('myset', ['a', 'a', 'a'])).toBe(1);
+        expect(store.scard('myset')).toBe(1);
+      });
+
+      it('throws WrongTypeError when the key holds a string', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar');
+        expect(() => store.sadd('foo', ['a'])).toThrow(WrongTypeError);
+      });
+
+      it('throws WrongTypeError when the key holds a list', () => {
+        const store = new DataStore();
+        store.rpush('mylist', ['a']);
+        expect(() => store.sadd('mylist', ['a'])).toThrow(WrongTypeError);
+      });
+
+      it('throws WrongTypeError when the key holds a hash', () => {
+        const store = new DataStore();
+        store.hset('myhash', [['field1', 'a']]);
+        expect(() => store.sadd('myhash', ['a'])).toThrow(WrongTypeError);
+      });
+    });
+
+    describe('srem', () => {
+      it('removes existing members and returns the count removed', () => {
+        const store = new DataStore();
+        store.sadd('myset', ['a', 'b', 'c']);
+        expect(store.srem('myset', ['a', 'missing'])).toBe(1);
+        expect(store.sismember('myset', 'a')).toBe(false);
+        expect(store.sismember('myset', 'b')).toBe(true);
+      });
+
+      it('returns 0 for a key that does not exist', () => {
+        const store = new DataStore();
+        expect(store.srem('missing', ['a'])).toBe(0);
+      });
+
+      it('removes the key once the set becomes empty', () => {
+        const store = new DataStore();
+        store.sadd('myset', ['only']);
+        expect(store.srem('myset', ['only'])).toBe(1);
+        expect(store.size).toBe(0);
+        expect(store.scard('myset')).toBe(0);
+      });
+
+      it('throws WrongTypeError when the key holds a string', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar');
+        expect(() => store.srem('foo', ['a'])).toThrow(WrongTypeError);
+      });
+    });
+
+    describe('smembers', () => {
+      it('returns all members', () => {
+        const store = new DataStore();
+        store.sadd('myset', ['a', 'b', 'c']);
+        expect(store.smembers('myset').sort()).toEqual(['a', 'b', 'c']);
+      });
+
+      it('returns an empty array for a key that does not exist', () => {
+        const store = new DataStore();
+        expect(store.smembers('missing')).toEqual([]);
+      });
+
+      it('throws WrongTypeError when the key holds a string', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar');
+        expect(() => store.smembers('foo')).toThrow(WrongTypeError);
+      });
+    });
+
+    describe('sismember', () => {
+      it('returns true for an existing member', () => {
+        const store = new DataStore();
+        store.sadd('myset', ['a']);
+        expect(store.sismember('myset', 'a')).toBe(true);
+      });
+
+      it('returns false for a missing member or key', () => {
+        const store = new DataStore();
+        store.sadd('myset', ['a']);
+        expect(store.sismember('myset', 'missing')).toBe(false);
+        expect(store.sismember('missing', 'a')).toBe(false);
+      });
+
+      it('throws WrongTypeError when the key holds a string', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar');
+        expect(() => store.sismember('foo', 'a')).toThrow(WrongTypeError);
+      });
+    });
+
+    describe('scard', () => {
+      it('returns the number of members', () => {
+        const store = new DataStore();
+        store.sadd('myset', ['a', 'b', 'c']);
+        expect(store.scard('myset')).toBe(3);
+      });
+
+      it('returns 0 for a key that does not exist', () => {
+        const store = new DataStore();
+        expect(store.scard('missing')).toBe(0);
+      });
+
+      it('throws WrongTypeError when the key holds a string', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar');
+        expect(() => store.scard('foo')).toThrow(WrongTypeError);
+      });
+    });
+  });
+
   describe('cross-type behavior', () => {
     it('get() throws WrongTypeError when the key holds a list', () => {
       const store = new DataStore();
@@ -474,6 +607,32 @@ describe('DataStore', () => {
       store.set('myhash', 'now a string');
       expect(store.get('myhash')).toBe('now a string');
       expect(() => store.hlen('myhash')).toThrow(WrongTypeError);
+    });
+
+    it('get() throws WrongTypeError when the key holds a set', () => {
+      const store = new DataStore();
+      store.sadd('myset', ['a']);
+      expect(() => store.get('myset')).toThrow(WrongTypeError);
+    });
+
+    it('sadd() throws WrongTypeError when the key holds a list', () => {
+      const store = new DataStore();
+      store.rpush('mylist', ['a']);
+      expect(() => store.sadd('mylist', ['a'])).toThrow(WrongTypeError);
+    });
+
+    it('lpush() throws WrongTypeError when the key holds a set', () => {
+      const store = new DataStore();
+      store.sadd('myset', ['a']);
+      expect(() => store.lpush('myset', ['a'])).toThrow(WrongTypeError);
+    });
+
+    it('set() overwrites a set key with a string, discarding the set', () => {
+      const store = new DataStore();
+      store.sadd('myset', ['a']);
+      store.set('myset', 'now a string');
+      expect(store.get('myset')).toBe('now a string');
+      expect(() => store.scard('myset')).toThrow(WrongTypeError);
     });
 
     it('del() and exists() work regardless of value type', () => {

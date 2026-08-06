@@ -26,7 +26,13 @@ export interface HashEntry {
   expiresAt: number | null;
 }
 
-export type StoredEntry = StringEntry | ListEntry | HashEntry;
+export interface SetEntry {
+  type: 'set';
+  value: Set<string>;
+  expiresAt: number | null;
+}
+
+export type StoredEntry = StringEntry | ListEntry | HashEntry | SetEntry;
 
 /** Thrown when a command targets a key that currently holds a different data type. */
 export class WrongTypeError extends Error {
@@ -192,7 +198,71 @@ export class DataStore {
     return entry.value.size;
   }
 
+  // ---- sets ----
+
+  /** Adds each of `members` to the set at `key`. Creates the set if `key` doesn't exist. Returns how many members were newly added (not already present). */
+  sadd(key: string, members: string[]): number {
+    const set = this.getOrCreateSet(key);
+    let added = 0;
+    for (const member of members) {
+      if (!set.value.has(member)) added++;
+      set.value.add(member);
+    }
+    return added;
+  }
+
+  /** Removes each of `members` from the set at `key`. Returns how many actually existed. Removes the key entirely once its set empties. */
+  srem(key: string, members: string[]): number {
+    const entry = this.data.get(key);
+    if (entry === undefined) return 0;
+    if (entry.type !== 'set') throw new WrongTypeError();
+
+    let removed = 0;
+    for (const member of members) {
+      if (entry.value.delete(member)) removed++;
+    }
+    if (entry.value.size === 0) {
+      this.data.delete(key);
+    }
+    return removed;
+  }
+
+  /** Returns all members of the set at `key`, or an empty array if it doesn't exist. */
+  smembers(key: string): string[] {
+    const entry = this.data.get(key);
+    if (entry === undefined) return [];
+    if (entry.type !== 'set') throw new WrongTypeError();
+    return [...entry.value];
+  }
+
+  /** Returns whether `member` is in the set at `key`. */
+  sismember(key: string, member: string): boolean {
+    const entry = this.data.get(key);
+    if (entry === undefined) return false;
+    if (entry.type !== 'set') throw new WrongTypeError();
+    return entry.value.has(member);
+  }
+
+  /** Returns the number of members in the set at `key`, or 0 if it doesn't exist. */
+  scard(key: string): number {
+    const entry = this.data.get(key);
+    if (entry === undefined) return 0;
+    if (entry.type !== 'set') throw new WrongTypeError();
+    return entry.value.size;
+  }
+
   // ---- shared internals ----
+
+  private getOrCreateSet(key: string): SetEntry {
+    const entry = this.data.get(key);
+    if (entry === undefined) {
+      const set: SetEntry = { type: 'set', value: new Set(), expiresAt: null };
+      this.data.set(key, set);
+      return set;
+    }
+    if (entry.type !== 'set') throw new WrongTypeError();
+    return entry;
+  }
 
   private getOrCreateHash(key: string): HashEntry {
     const entry = this.data.get(key);

@@ -463,6 +463,88 @@ describe('dispatch', () => {
     });
   });
 
+  describe('SADD / SREM', () => {
+    it('SADD creates a set and returns the number of newly added members', () => {
+      const store = new DataStore();
+      expect(dispatch(store, cmd('SADD', 'myset', 'a', 'b'))).toEqual(integer(2));
+    });
+
+    it('SADD returns 0 when the member is already present', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SADD', 'myset', 'a'));
+      expect(dispatch(store, cmd('SADD', 'myset', 'a'))).toEqual(integer(0));
+    });
+
+    it('SREM removes members and returns the count removed', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SADD', 'myset', 'a', 'b'));
+      expect(dispatch(store, cmd('SREM', 'myset', 'a', 'missing'))).toEqual(integer(1));
+    });
+
+    it('SREM removes the key once the set empties, reflected in EXISTS', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SADD', 'myset', 'only'));
+      dispatch(store, cmd('SREM', 'myset', 'only'));
+      expect(dispatch(store, cmd('EXISTS', 'myset'))).toEqual(integer(0));
+    });
+
+    it('returns WRONGTYPE on a string key', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SET', 'foo', 'bar'));
+      const expected = {
+        type: 'error',
+        value: 'WRONGTYPE Operation against a key holding the wrong kind of value',
+      };
+      expect(dispatch(store, cmd('SADD', 'foo', 'a'))).toEqual(expected);
+      expect(dispatch(store, cmd('SREM', 'foo', 'a'))).toEqual(expected);
+    });
+  });
+
+  describe('SMEMBERS / SISMEMBER / SCARD', () => {
+    it('SMEMBERS returns every member', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SADD', 'myset', 'a', 'b'));
+      const reply = dispatch(store, cmd('SMEMBERS', 'myset'));
+      expect(reply.type).toBe('array');
+      const values = (reply as { type: 'array'; value: RespValue[] }).value
+        .map((v) => (v.type === 'bulk' ? v.value : null))
+        .sort();
+      expect(values).toEqual(['a', 'b']);
+    });
+
+    it('SMEMBERS returns an empty array for a missing key', () => {
+      const store = new DataStore();
+      expect(dispatch(store, cmd('SMEMBERS', 'missing'))).toEqual(array([]));
+    });
+
+    it('SISMEMBER reports membership as 1 or 0', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SADD', 'myset', 'a'));
+      expect(dispatch(store, cmd('SISMEMBER', 'myset', 'a'))).toEqual(integer(1));
+      expect(dispatch(store, cmd('SISMEMBER', 'myset', 'missing'))).toEqual(integer(0));
+      expect(dispatch(store, cmd('SISMEMBER', 'missing', 'a'))).toEqual(integer(0));
+    });
+
+    it('SCARD returns the member count', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SADD', 'myset', 'a', 'b', 'c'));
+      expect(dispatch(store, cmd('SCARD', 'myset'))).toEqual(integer(3));
+    });
+
+    it('SCARD returns 0 for a missing key', () => {
+      const store = new DataStore();
+      expect(dispatch(store, cmd('SCARD', 'missing'))).toEqual(integer(0));
+    });
+
+    it('returns WRONGTYPE on a string key', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SET', 'foo', 'bar'));
+      expect(dispatch(store, cmd('SMEMBERS', 'foo')).type).toBe('error');
+      expect(dispatch(store, cmd('SISMEMBER', 'foo', 'a')).type).toBe('error');
+      expect(dispatch(store, cmd('SCARD', 'foo')).type).toBe('error');
+    });
+  });
+
   describe('cross-type errors surfaced through dispatch', () => {
     it('GET on a list key returns WRONGTYPE', () => {
       const store = new DataStore();
@@ -482,6 +564,15 @@ describe('dispatch', () => {
       });
     });
 
+    it('GET on a set key returns WRONGTYPE', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SADD', 'myset', 'a'));
+      expect(dispatch(store, cmd('GET', 'myset'))).toEqual({
+        type: 'error',
+        value: 'WRONGTYPE Operation against a key holding the wrong kind of value',
+      });
+    });
+
     it('LPUSH on a hash key returns WRONGTYPE', () => {
       const store = new DataStore();
       dispatch(store, cmd('HSET', 'myhash', 'field1', 'a'));
@@ -492,6 +583,18 @@ describe('dispatch', () => {
       const store = new DataStore();
       dispatch(store, cmd('RPUSH', 'mylist', 'a'));
       expect(dispatch(store, cmd('HSET', 'mylist', 'field1', 'a')).type).toBe('error');
+    });
+
+    it('SADD on a hash key returns WRONGTYPE', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('HSET', 'myhash', 'field1', 'a'));
+      expect(dispatch(store, cmd('SADD', 'myhash', 'a')).type).toBe('error');
+    });
+
+    it('HSET on a set key returns WRONGTYPE', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SADD', 'myset', 'a'));
+      expect(dispatch(store, cmd('HSET', 'myset', 'field1', 'a')).type).toBe('error');
     });
   });
 });
