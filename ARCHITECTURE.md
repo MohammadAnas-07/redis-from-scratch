@@ -111,13 +111,16 @@ redis-from-scratch/
 │   │   │   └── dataStore.test.ts
 │   │   ├── commands/
 │   │   │   └── dispatcher.test.ts
+│   │   ├── expiry/
+│   │   │   └── expiryEngine.test.ts
 │   │   └── config.test.ts
 │   ├── integration/             # Spins up the real server, talks to it over a real socket
 │   │   ├── tcpServer.test.ts    # Transport/connection-lifecycle behavior
 │   │   ├── coreCommands.test.ts # Real RESP commands end-to-end (PING/SET/GET/DEL/EXISTS)
 │   │   ├── listCommands.test.ts # Real RESP list commands end-to-end, incl. WRONGTYPE
 │   │   ├── hashCommands.test.ts # Real RESP hash commands end-to-end, incl. WRONGTYPE
-│   │   └── setCommands.test.ts  # Real RESP set commands end-to-end, incl. WRONGTYPE
+│   │   ├── setCommands.test.ts  # Real RESP set commands end-to-end, incl. WRONGTYPE
+│   │   └── expiry.test.ts       # EXPIRE/TTL/PERSIST end-to-end, incl. passive expiry with no sweep running
 │   └── benchmark/
 │       └── .gitkeep             # Scripts comparing this server's throughput/latency to real Redis
 ├── ARCHITECTURE.md
@@ -232,9 +235,9 @@ every chunk. Nothing below is implemented yet except where marked.
       (EX/PX only) done in `feature/core-commands`; APPEND/INCR/DECR/other
       SET options (NX, XX, ...) still pending
 - [ ] Key commands (DEL, EXISTS, EXPIRE, TTL, KEYS, TYPE, ...) — DEL and
-      EXISTS done in `feature/core-commands`; EXPIRE/TTL/KEYS/TYPE still
-      pending (this is also where SET's stored `expiresAt` will start
-      being enforced)
+      EXISTS done in `feature/core-commands`; EXPIRE, PEXPIRE, TTL, PTTL,
+      and PERSIST done in `feature/expiry` (see the Expiry engine entry
+      below — `expiresAt` is now fully enforced); KEYS/TYPE still pending
 - [x] Hash commands (HSET, HGET, HDEL, HGETALL, HEXISTS, HLEN) — all six
       done in `feature/hashes`, backed by a new `HashEntry` type in
       `DataStore` (a `Map<string, string>` per key) alongside
@@ -265,7 +268,19 @@ every chunk. Nothing below is implemented yet except where marked.
 
 ### Core engine features
 
-- [ ] Expiry engine (passive + active expiry)
+- [x] Expiry engine (passive + active expiry) — done in `feature/expiry`.
+      Passive: `DataStore.getLive()` lazily deletes and treats a key as
+      absent the instant anything looks it up past its TTL, so every
+      read path (GET, EXISTS, DEL, LRANGE, HGET, SMEMBERS, ...) respects
+      expiry with zero help from a background process. Active:
+      `DataStore.sweepExpired(sampleSize)`, called on an interval by the
+      new `ExpiryEngine` class (`src/expiry/expiryEngine.ts`, wired into
+      `src/index.ts`) — bounded work per tick, sampling only keys
+      tracked in a side-set (`keysWithExpiry`) rather than scanning the
+      whole keyspace, the same idea real Redis's active-expire cycle
+      uses (simplified: insertion-order sampling here, not true
+      randomness). New commands: EXPIRE, PEXPIRE, TTL, PTTL, PERSIST —
+      generic/type-agnostic, work on any key type
 - [ ] Pub/sub (SUBSCRIBE, UNSUBSCRIBE, PUBLISH)
 - [ ] Transactions (MULTI/EXEC/DISCARD/WATCH)
 - [ ] AOF persistence (write log + startup replay)
