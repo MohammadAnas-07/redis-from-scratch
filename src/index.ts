@@ -1,18 +1,21 @@
 // Entry point: reads config and boots the TCP server.
 import { dispatch } from './commands/dispatcher.js';
 import { loadConfig } from './config/config.js';
+import { ExpiryEngine } from './expiry/expiryEngine.js';
 import { TcpServer } from './server/tcpServer.js';
 import { DataStore } from './store/dataStore.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
   const store = new DataStore();
+  const expiryEngine = new ExpiryEngine(store);
   const server = new TcpServer({
     port: config.port,
     log: (message) => console.log(`[tcp] ${message}`),
     dispatch: (request) => dispatch(store, request),
   });
 
+  expiryEngine.start();
   await server.listen();
 
   let shuttingDown = false;
@@ -21,6 +24,7 @@ async function main(): Promise<void> {
     shuttingDown = true;
 
     console.log(`received ${signal}, closing connections and shutting down...`);
+    expiryEngine.stop();
     server
       .close()
       .then(() => {

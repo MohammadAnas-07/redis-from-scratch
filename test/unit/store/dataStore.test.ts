@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DataStore, WrongTypeError } from '../../../src/store/dataStore.js';
 
 describe('DataStore', () => {
@@ -641,6 +641,226 @@ describe('DataStore', () => {
       expect(store.exists(['mylist'])).toBe(1);
       expect(store.del(['mylist'])).toBe(1);
       expect(store.exists(['mylist'])).toBe(0);
+    });
+  });
+
+  describe('expiry', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    describe('passive expiry', () => {
+      it('get() returns the value before the TTL passes', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar', Date.now() + 1000);
+        expect(store.get('foo')).toBe('bar');
+      });
+
+      it('get() returns null once the TTL has passed, without anything else cleaning it up', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar', Date.now() + 100);
+        vi.advanceTimersByTime(200);
+        expect(store.get('foo')).toBeNull();
+      });
+
+      it('an expired key is actually removed from the store on access, not just hidden', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar', Date.now() + 100);
+        vi.advanceTimersByTime(200);
+        store.get('foo'); // triggers lazy deletion
+        expect(store.size).toBe(0);
+      });
+
+      it('exists() does not count an expired key', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar', Date.now() + 100);
+        vi.advanceTimersByTime(200);
+        expect(store.exists(['foo'])).toBe(0);
+      });
+
+      it('del() does not count an expired key as removed', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar', Date.now() + 100);
+        vi.advanceTimersByTime(200);
+        expect(store.del(['foo'])).toBe(0);
+      });
+
+      it('applies to lists, hashes, and sets too, not just strings', () => {
+        const store = new DataStore();
+        store.rpush('mylist', ['a', 'b']);
+        store.expireAt('mylist', Date.now() + 100);
+        store.hset('myhash', [['field1', 'a']]);
+        store.expireAt('myhash', Date.now() + 100);
+        store.sadd('myset', ['a']);
+        store.expireAt('myset', Date.now() + 100);
+
+        vi.advanceTimersByTime(200);
+
+        expect(store.lrange('mylist', 0, -1)).toEqual([]);
+        expect(store.llen('mylist')).toBe(0);
+        expect(store.hgetall('myhash')).toEqual([]);
+        expect(store.hlen('myhash')).toBe(0);
+        expect(store.smembers('myset')).toEqual([]);
+        expect(store.scard('myset')).toBe(0);
+      });
+
+      it('an expired key can be recreated as a different type without WRONGTYPE', () => {
+        const store = new DataStore();
+        store.set('foo', 'a string', Date.now() + 100);
+        vi.advanceTimersByTime(200);
+        // If the expired string entry weren't purged first, this would
+        // incorrectly throw WrongTypeError instead of creating a list.
+        expect(() => store.lpush('foo', ['x'])).not.toThrow();
+        expect(store.lrange('foo', 0, -1)).toEqual(['x']);
+      });
+
+      it('re-SET after expiry behaves like setting a brand-new key', () => {
+        const store = new DataStore();
+        store.set('foo', 'old', Date.now() + 100);
+        vi.advanceTimersByTime(200);
+        store.set('foo', 'new');
+        expect(store.get('foo')).toBe('new');
+        expect(store.getEntry('foo')?.expiresAt).toBeNull();
+      });
+    });
+
+    describe('expireAt', () => {
+      it('sets an expiry on an existing key and returns true', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar');
+        expect(store.expireAt('foo', Date.now() + 1000)).toBe(true);
+        expect(store.getEntry('foo')?.expiresAt).not.toBeNull();
+      });
+
+      it('returns false for a key that does not exist', () => {
+        const store = new DataStore();
+        expect(store.expireAt('missing', Date.now() + 1000)).toBe(false);
+      });
+
+      it('overwrites an existing expiry', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar', Date.now() + 1000);
+        store.expireAt('foo', Date.now() + 5000);
+        expect(store.getEntry('foo')?.expiresAt).toBe(Date.now() + 5000);
+      });
+    });
+
+    describe('persist', () => {
+      it('removes an existing expiry and returns true', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar', Date.now() + 1000);
+        expect(store.persist('foo')).toBe(true);
+        expect(store.getEntry('foo')?.expiresAt).toBeNull();
+      });
+
+      it('returns false for a key with no expiry', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar');
+        expect(store.persist('foo')).toBe(false);
+      });
+
+      it('returns false for a key that does not exist', () => {
+        const store = new DataStore();
+        expect(store.persist('missing')).toBe(false);
+      });
+
+      it('a persisted key survives past its old TTL', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar', Date.now() + 100);
+        store.persist('foo');
+        vi.advanceTimersByTime(200);
+        expect(store.get('foo')).toBe('bar');
+      });
+    });
+
+    describe('pttl', () => {
+      it('returns -2 for a key that does not exist', () => {
+        const store = new DataStore();
+        expect(store.pttl('missing')).toBe(-2);
+      });
+
+      it('returns -1 for a key that exists but has no expiry', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar');
+        expect(store.pttl('foo')).toBe(-1);
+      });
+
+      it('returns the remaining milliseconds for a key with an expiry', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar', Date.now() + 5000);
+        expect(store.pttl('foo')).toBe(5000);
+        vi.advanceTimersByTime(2000);
+        expect(store.pttl('foo')).toBe(3000);
+      });
+
+      it('returns -2 once the key has passively expired', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar', Date.now() + 100);
+        vi.advanceTimersByTime(200);
+        expect(store.pttl('foo')).toBe(-2);
+      });
+    });
+
+    describe('sweepExpired (active expiry)', () => {
+      it('removes an expired key even though nothing has read it', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar', Date.now() + 100);
+        vi.advanceTimersByTime(200);
+
+        expect(store.sweepExpired(10)).toBe(1);
+        expect(store.size).toBe(0);
+      });
+
+      it('never touches keys without a TTL', () => {
+        const store = new DataStore();
+        store.set('permanent', 'value');
+        vi.advanceTimersByTime(10_000);
+
+        expect(store.sweepExpired(10)).toBe(0);
+        expect(store.get('permanent')).toBe('value');
+      });
+
+      it('leaves keys with an unexpired TTL alone', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar', Date.now() + 10_000);
+
+        expect(store.sweepExpired(10)).toBe(0);
+        expect(store.get('foo')).toBe('bar');
+      });
+
+      it('bounds work per call to sampleSize, even when more keys are expired', () => {
+        const store = new DataStore();
+        for (let i = 0; i < 10; i++) {
+          store.set(`k${i}`, 'v', Date.now() + 100);
+        }
+        vi.advanceTimersByTime(200);
+
+        expect(store.sweepExpired(3)).toBe(3);
+        expect(store.size).toBe(7);
+
+        // Calling it repeatedly eventually clears the rest.
+        expect(store.sweepExpired(3)).toBe(3);
+        expect(store.sweepExpired(3)).toBe(3);
+        expect(store.sweepExpired(3)).toBe(1);
+        expect(store.size).toBe(0);
+      });
+
+      it('does not scan the whole keyspace — only keys that currently have a TTL', () => {
+        const store = new DataStore();
+        for (let i = 0; i < 100; i++) {
+          store.set(`permanent${i}`, 'v'); // no TTL
+        }
+        store.set('expiring', 'v', Date.now() + 100);
+        vi.advanceTimersByTime(200);
+
+        // A tiny sample size still finds the one expiring key instead of
+        // getting lost among 100 permanent ones.
+        expect(store.sweepExpired(1)).toBe(1);
+      });
     });
   });
 });

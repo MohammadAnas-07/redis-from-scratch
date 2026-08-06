@@ -47,6 +47,11 @@ const COMMANDS: Record<string, CommandDefinition> = {
   SMEMBERS: { minArgs: 1, maxArgs: 1, handler: handleSmembers },
   SISMEMBER: { minArgs: 2, maxArgs: 2, handler: handleSismember },
   SCARD: { minArgs: 1, maxArgs: 1, handler: handleScard },
+  EXPIRE: { minArgs: 2, maxArgs: 2, handler: handleExpire },
+  PEXPIRE: { minArgs: 2, maxArgs: 2, handler: handlePexpire },
+  TTL: { minArgs: 1, maxArgs: 1, handler: handleTtl },
+  PTTL: { minArgs: 1, maxArgs: 1, handler: handlePttl },
+  PERSIST: { minArgs: 1, maxArgs: 1, handler: handlePersist },
 };
 
 /**
@@ -112,6 +117,7 @@ function handlePing(_store: DataStore, args: string[]): RespValue {
 }
 
 const SET_EXPIRE_OPTIONS = new Set(['EX', 'PX']);
+const INTEGER_RE = /^-?\d+$/;
 
 function handleSet(store: DataStore, args: string[]): RespValue {
   const key = args[0];
@@ -140,7 +146,7 @@ function handleSet(store: DataStore, args: string[]): RespValue {
       return error('ERR syntax error');
     }
 
-    if (!/^-?\d+$/.test(rawAmount)) {
+    if (!INTEGER_RE.test(rawAmount)) {
       return error('ERR value is not an integer or out of range');
     }
     const amount = Number(rawAmount);
@@ -210,7 +216,7 @@ function handleLrange(store: DataStore, args: string[]): RespValue {
   if (key === undefined || rawStart === undefined || rawStop === undefined) {
     return error("ERR wrong number of arguments for 'lrange' command");
   }
-  if (!/^-?\d+$/.test(rawStart) || !/^-?\d+$/.test(rawStop)) {
+  if (!INTEGER_RE.test(rawStart) || !INTEGER_RE.test(rawStop)) {
     return error('ERR value is not an integer or out of range');
   }
 
@@ -336,4 +342,58 @@ function handleScard(store: DataStore, args: string[]): RespValue {
     return error("ERR wrong number of arguments for 'scard' command");
   }
   return integer(store.scard(key));
+}
+
+function handleExpire(store: DataStore, args: string[]): RespValue {
+  const key = args[0];
+  const rawSeconds = args[1];
+  if (key === undefined || rawSeconds === undefined) {
+    return error("ERR wrong number of arguments for 'expire' command");
+  }
+  if (!INTEGER_RE.test(rawSeconds)) {
+    return error('ERR value is not an integer or out of range');
+  }
+
+  const expiresAt = Date.now() + Number(rawSeconds) * 1000;
+  return integer(store.expireAt(key, expiresAt) ? 1 : 0);
+}
+
+function handlePexpire(store: DataStore, args: string[]): RespValue {
+  const key = args[0];
+  const rawMillis = args[1];
+  if (key === undefined || rawMillis === undefined) {
+    return error("ERR wrong number of arguments for 'pexpire' command");
+  }
+  if (!INTEGER_RE.test(rawMillis)) {
+    return error('ERR value is not an integer or out of range');
+  }
+
+  const expiresAt = Date.now() + Number(rawMillis);
+  return integer(store.expireAt(key, expiresAt) ? 1 : 0);
+}
+
+function handleTtl(store: DataStore, args: string[]): RespValue {
+  const key = args[0];
+  if (key === undefined) {
+    return error("ERR wrong number of arguments for 'ttl' command");
+  }
+
+  const ms = store.pttl(key);
+  return integer(ms < 0 ? ms : Math.round(ms / 1000));
+}
+
+function handlePttl(store: DataStore, args: string[]): RespValue {
+  const key = args[0];
+  if (key === undefined) {
+    return error("ERR wrong number of arguments for 'pttl' command");
+  }
+  return integer(store.pttl(key));
+}
+
+function handlePersist(store: DataStore, args: string[]): RespValue {
+  const key = args[0];
+  if (key === undefined) {
+    return error("ERR wrong number of arguments for 'persist' command");
+  }
+  return integer(store.persist(key) ? 1 : 0);
 }

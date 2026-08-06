@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dispatch } from '../../../src/commands/dispatcher.js';
 import {
   array,
@@ -595,6 +595,118 @@ describe('dispatch', () => {
       const store = new DataStore();
       dispatch(store, cmd('SADD', 'myset', 'a'));
       expect(dispatch(store, cmd('HSET', 'myset', 'field1', 'a')).type).toBe('error');
+    });
+  });
+
+  describe('EXPIRE / PEXPIRE / TTL / PTTL / PERSIST', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('EXPIRE sets a TTL and returns 1 for an existing key', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SET', 'foo', 'bar'));
+      expect(dispatch(store, cmd('EXPIRE', 'foo', '10'))).toEqual(integer(1));
+      expect(dispatch(store, cmd('TTL', 'foo'))).toEqual(integer(10));
+    });
+
+    it('EXPIRE returns 0 for a missing key', () => {
+      const store = new DataStore();
+      expect(dispatch(store, cmd('EXPIRE', 'missing', '10'))).toEqual(integer(0));
+    });
+
+    it('PEXPIRE sets a millisecond TTL and PTTL reflects it', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SET', 'foo', 'bar'));
+      expect(dispatch(store, cmd('PEXPIRE', 'foo', '5000'))).toEqual(integer(1));
+      expect(dispatch(store, cmd('PTTL', 'foo'))).toEqual(integer(5000));
+    });
+
+    it('PEXPIRE returns 0 for a missing key', () => {
+      const store = new DataStore();
+      expect(dispatch(store, cmd('PEXPIRE', 'missing', '5000'))).toEqual(integer(0));
+    });
+
+    it('TTL returns -2 for a missing key and -1 for a key with no expiry', () => {
+      const store = new DataStore();
+      expect(dispatch(store, cmd('TTL', 'missing'))).toEqual(integer(-2));
+      dispatch(store, cmd('SET', 'foo', 'bar'));
+      expect(dispatch(store, cmd('TTL', 'foo'))).toEqual(integer(-1));
+    });
+
+    it('PTTL returns -2 for a missing key and -1 for a key with no expiry', () => {
+      const store = new DataStore();
+      expect(dispatch(store, cmd('PTTL', 'missing'))).toEqual(integer(-2));
+      dispatch(store, cmd('SET', 'foo', 'bar'));
+      expect(dispatch(store, cmd('PTTL', 'foo'))).toEqual(integer(-1));
+    });
+
+    it('TTL rounds the remaining time to the nearest second', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SET', 'foo', 'bar', 'PX', '2600'));
+      expect(dispatch(store, cmd('TTL', 'foo'))).toEqual(integer(3));
+    });
+
+    it('PERSIST removes an existing expiry and returns 1', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SET', 'foo', 'bar', 'EX', '10'));
+      expect(dispatch(store, cmd('PERSIST', 'foo'))).toEqual(integer(1));
+      expect(dispatch(store, cmd('TTL', 'foo'))).toEqual(integer(-1));
+    });
+
+    it('PERSIST returns 0 for a key with no expiry or a missing key', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SET', 'foo', 'bar'));
+      expect(dispatch(store, cmd('PERSIST', 'foo'))).toEqual(integer(0));
+      expect(dispatch(store, cmd('PERSIST', 'missing'))).toEqual(integer(0));
+    });
+
+    it('rejects a non-integer EXPIRE/PEXPIRE amount', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SET', 'foo', 'bar'));
+      expect(dispatch(store, cmd('EXPIRE', 'foo', 'soon')).type).toBe('error');
+      expect(dispatch(store, cmd('PEXPIRE', 'foo', 'soon')).type).toBe('error');
+    });
+
+    it('EXPIRE with 0 or negative seconds makes the key expire immediately on next access', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SET', 'foo', 'bar'));
+      expect(dispatch(store, cmd('EXPIRE', 'foo', '0'))).toEqual(integer(1));
+      expect(dispatch(store, cmd('GET', 'foo'))).toEqual(bulkString(null));
+    });
+
+    it('GET returns nil after the key passively expires', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SET', 'foo', 'bar', 'PX', '100'));
+      vi.advanceTimersByTime(150);
+      expect(dispatch(store, cmd('GET', 'foo'))).toEqual(bulkString(null));
+    });
+
+    it('EXISTS does not count a passively-expired key', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SET', 'foo', 'bar', 'PX', '100'));
+      vi.advanceTimersByTime(150);
+      expect(dispatch(store, cmd('EXISTS', 'foo'))).toEqual(integer(0));
+    });
+
+    it('TTL reports -2 for a key that has passively expired', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SET', 'foo', 'bar', 'PX', '100'));
+      vi.advanceTimersByTime(150);
+      expect(dispatch(store, cmd('TTL', 'foo'))).toEqual(integer(-2));
+    });
+
+    it('EXPIRE/TTL work on list, hash, and set keys too (generic, type-agnostic)', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('RPUSH', 'mylist', 'a'));
+      expect(dispatch(store, cmd('EXPIRE', 'mylist', '10'))).toEqual(integer(1));
+      vi.advanceTimersByTime(10_500);
+      expect(dispatch(store, cmd('LRANGE', 'mylist', '0', '-1'))).toEqual(array([]));
+      expect(dispatch(store, cmd('LLEN', 'mylist'))).toEqual(integer(0));
     });
   });
 });
