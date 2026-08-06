@@ -205,4 +205,146 @@ describe('dispatch', () => {
       expect(dispatch(store, cmd('EXISTS')).type).toBe('error');
     });
   });
+
+  describe('LPUSH / RPUSH', () => {
+    it('LPUSH creates a list and returns the new length', () => {
+      const store = new DataStore();
+      expect(dispatch(store, cmd('LPUSH', 'mylist', 'a', 'b', 'c'))).toEqual(integer(3));
+    });
+
+    it('LPUSH pushes each value in order, so the last one ends up at the head', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('LPUSH', 'mylist', 'a', 'b', 'c'));
+      expect(dispatch(store, cmd('LRANGE', 'mylist', '0', '-1'))).toEqual(
+        array([bulkString('c'), bulkString('b'), bulkString('a')]),
+      );
+    });
+
+    it('RPUSH appends each value in order', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('RPUSH', 'mylist', 'a', 'b', 'c'));
+      expect(dispatch(store, cmd('LRANGE', 'mylist', '0', '-1'))).toEqual(
+        array([bulkString('a'), bulkString('b'), bulkString('c')]),
+      );
+    });
+
+    it('requires at least a key and one value', () => {
+      const store = new DataStore();
+      expect(dispatch(store, cmd('LPUSH', 'mylist')).type).toBe('error');
+      expect(dispatch(store, cmd('RPUSH', 'mylist')).type).toBe('error');
+    });
+
+    it('returns WRONGTYPE for LPUSH/RPUSH on a string key', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SET', 'foo', 'bar'));
+      const expected = {
+        type: 'error',
+        value: 'WRONGTYPE Operation against a key holding the wrong kind of value',
+      };
+      expect(dispatch(store, cmd('LPUSH', 'foo', 'x'))).toEqual(expected);
+      expect(dispatch(store, cmd('RPUSH', 'foo', 'x'))).toEqual(expected);
+    });
+  });
+
+  describe('LPOP / RPOP', () => {
+    it('LPOP removes and returns the first element', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('RPUSH', 'mylist', 'a', 'b'));
+      expect(dispatch(store, cmd('LPOP', 'mylist'))).toEqual(bulkString('a'));
+    });
+
+    it('RPOP removes and returns the last element', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('RPUSH', 'mylist', 'a', 'b'));
+      expect(dispatch(store, cmd('RPOP', 'mylist'))).toEqual(bulkString('b'));
+    });
+
+    it('returns a null bulk string for a missing key', () => {
+      const store = new DataStore();
+      expect(dispatch(store, cmd('LPOP', 'missing'))).toEqual(bulkString(null));
+      expect(dispatch(store, cmd('RPOP', 'missing'))).toEqual(bulkString(null));
+    });
+
+    it('removes the key once the list empties, reflected in EXISTS', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('RPUSH', 'mylist', 'only'));
+      dispatch(store, cmd('LPOP', 'mylist'));
+      expect(dispatch(store, cmd('EXISTS', 'mylist'))).toEqual(integer(0));
+    });
+
+    it('returns WRONGTYPE on a string key', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SET', 'foo', 'bar'));
+      expect(dispatch(store, cmd('LPOP', 'foo')).type).toBe('error');
+      expect(dispatch(store, cmd('RPOP', 'foo')).type).toBe('error');
+    });
+  });
+
+  describe('LRANGE', () => {
+    it('returns the full list with 0 -1', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('RPUSH', 'mylist', 'a', 'b', 'c'));
+      expect(dispatch(store, cmd('LRANGE', 'mylist', '0', '-1'))).toEqual(
+        array([bulkString('a'), bulkString('b'), bulkString('c')]),
+      );
+    });
+
+    it('supports negative indices', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('RPUSH', 'mylist', 'a', 'b', 'c'));
+      expect(dispatch(store, cmd('LRANGE', 'mylist', '-2', '-1'))).toEqual(
+        array([bulkString('b'), bulkString('c')]),
+      );
+    });
+
+    it('returns an empty array for a missing key', () => {
+      const store = new DataStore();
+      expect(dispatch(store, cmd('LRANGE', 'missing', '0', '-1'))).toEqual(array([]));
+    });
+
+    it('rejects non-integer start/stop', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('RPUSH', 'mylist', 'a'));
+      expect(dispatch(store, cmd('LRANGE', 'mylist', 'zero', '-1'))).toEqual({
+        type: 'error',
+        value: 'ERR value is not an integer or out of range',
+      });
+    });
+
+    it('returns WRONGTYPE on a string key', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SET', 'foo', 'bar'));
+      expect(dispatch(store, cmd('LRANGE', 'foo', '0', '-1')).type).toBe('error');
+    });
+  });
+
+  describe('LLEN', () => {
+    it('returns the number of elements', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('RPUSH', 'mylist', 'a', 'b', 'c'));
+      expect(dispatch(store, cmd('LLEN', 'mylist'))).toEqual(integer(3));
+    });
+
+    it('returns 0 for a missing key', () => {
+      const store = new DataStore();
+      expect(dispatch(store, cmd('LLEN', 'missing'))).toEqual(integer(0));
+    });
+
+    it('returns WRONGTYPE on a string key', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('SET', 'foo', 'bar'));
+      expect(dispatch(store, cmd('LLEN', 'foo')).type).toBe('error');
+    });
+  });
+
+  describe('cross-type errors surfaced through dispatch', () => {
+    it('GET on a list key returns WRONGTYPE', () => {
+      const store = new DataStore();
+      dispatch(store, cmd('RPUSH', 'mylist', 'a'));
+      expect(dispatch(store, cmd('GET', 'mylist'))).toEqual({
+        type: 'error',
+        value: 'WRONGTYPE Operation against a key holding the wrong kind of value',
+      });
+    });
+  });
 });

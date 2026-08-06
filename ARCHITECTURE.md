@@ -114,7 +114,8 @@ redis-from-scratch/
 │   │   └── config.test.ts
 │   ├── integration/             # Spins up the real server, talks to it over a real socket
 │   │   ├── tcpServer.test.ts    # Transport/connection-lifecycle behavior
-│   │   └── coreCommands.test.ts # Real RESP commands end-to-end (PING/SET/GET/DEL/EXISTS)
+│   │   ├── coreCommands.test.ts # Real RESP commands end-to-end (PING/SET/GET/DEL/EXISTS)
+│   │   └── listCommands.test.ts # Real RESP list commands end-to-end, incl. WRONGTYPE
 │   └── benchmark/
 │       └── .gitkeep             # Scripts comparing this server's throughput/latency to real Redis
 ├── ARCHITECTURE.md
@@ -233,7 +234,14 @@ every chunk. Nothing below is implemented yet except where marked.
       pending (this is also where SET's stored `expiresAt` will start
       being enforced)
 - [ ] Hash commands (HSET, HGET, HDEL, HGETALL, ...)
-- [ ] List commands (LPUSH, RPUSH, LPOP, RPOP, LRANGE, ...)
+- [x] List commands (LPUSH, RPUSH, LPOP, RPOP, LRANGE, LLEN, ...) — all six
+      done in `feature/lists`, backed by a new `ListEntry` type in
+      `DataStore` alongside `StringEntry`. LPOP/RPOP don't support the
+      optional COUNT argument yet; LINSERT/LREM/LSET/LTRIM/etc. still
+      pending. A key is removed once LPOP/RPOP empties its list, matching
+      real Redis. Operating on a key of the wrong type (e.g. LPUSH on a
+      string, or GET on a list) returns a real-Redis-style `WRONGTYPE`
+      error instead of silently coercing or crashing
 - [ ] Set commands (SADD, SREM, SMEMBERS, SINTER, ...)
 - [ ] Sorted set commands (ZADD, ZRANGE, ZSCORE, ...)
 
