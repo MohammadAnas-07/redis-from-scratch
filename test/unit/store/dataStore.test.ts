@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DataStore } from '../../../src/store/dataStore.js';
+import { DataStore, WrongTypeError } from '../../../src/store/dataStore.js';
 
 describe('DataStore', () => {
   it('returns null for a key that was never set', () => {
@@ -91,5 +91,203 @@ describe('DataStore', () => {
     expect(store.size).toBe(2);
     store.del(['a']);
     expect(store.size).toBe(1);
+  });
+
+  describe('lists', () => {
+    describe('lpush', () => {
+      it('creates a list and returns the new length', () => {
+        const store = new DataStore();
+        expect(store.lpush('mylist', ['a'])).toBe(1);
+      });
+
+      it('pushes each value in order, so the last one ends up at the head', () => {
+        const store = new DataStore();
+        store.lpush('mylist', ['a', 'b', 'c']);
+        expect(store.lrange('mylist', 0, -1)).toEqual(['c', 'b', 'a']);
+      });
+
+      it('prepends onto an existing list', () => {
+        const store = new DataStore();
+        store.lpush('mylist', ['a']);
+        store.lpush('mylist', ['b']);
+        expect(store.lrange('mylist', 0, -1)).toEqual(['b', 'a']);
+      });
+
+      it('throws WrongTypeError when the key holds a string', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar');
+        expect(() => store.lpush('foo', ['x'])).toThrow(WrongTypeError);
+      });
+    });
+
+    describe('rpush', () => {
+      it('creates a list and returns the new length', () => {
+        const store = new DataStore();
+        expect(store.rpush('mylist', ['a'])).toBe(1);
+      });
+
+      it('appends each value in order', () => {
+        const store = new DataStore();
+        store.rpush('mylist', ['a', 'b', 'c']);
+        expect(store.lrange('mylist', 0, -1)).toEqual(['a', 'b', 'c']);
+      });
+
+      it('appends onto an existing list', () => {
+        const store = new DataStore();
+        store.rpush('mylist', ['a']);
+        store.rpush('mylist', ['b']);
+        expect(store.lrange('mylist', 0, -1)).toEqual(['a', 'b']);
+      });
+
+      it('throws WrongTypeError when the key holds a string', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar');
+        expect(() => store.rpush('foo', ['x'])).toThrow(WrongTypeError);
+      });
+    });
+
+    describe('lpop', () => {
+      it('removes and returns the first element', () => {
+        const store = new DataStore();
+        store.rpush('mylist', ['a', 'b', 'c']);
+        expect(store.lpop('mylist')).toBe('a');
+        expect(store.lrange('mylist', 0, -1)).toEqual(['b', 'c']);
+      });
+
+      it('returns null for a key that does not exist', () => {
+        const store = new DataStore();
+        expect(store.lpop('missing')).toBeNull();
+      });
+
+      it('removes the key once the list becomes empty', () => {
+        const store = new DataStore();
+        store.rpush('mylist', ['only']);
+        expect(store.lpop('mylist')).toBe('only');
+        expect(store.lpop('mylist')).toBeNull();
+        expect(store.size).toBe(0);
+      });
+
+      it('throws WrongTypeError when the key holds a string', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar');
+        expect(() => store.lpop('foo')).toThrow(WrongTypeError);
+      });
+    });
+
+    describe('rpop', () => {
+      it('removes and returns the last element', () => {
+        const store = new DataStore();
+        store.rpush('mylist', ['a', 'b', 'c']);
+        expect(store.rpop('mylist')).toBe('c');
+        expect(store.lrange('mylist', 0, -1)).toEqual(['a', 'b']);
+      });
+
+      it('returns null for a key that does not exist', () => {
+        const store = new DataStore();
+        expect(store.rpop('missing')).toBeNull();
+      });
+
+      it('removes the key once the list becomes empty', () => {
+        const store = new DataStore();
+        store.rpush('mylist', ['only']);
+        expect(store.rpop('mylist')).toBe('only');
+        expect(store.size).toBe(0);
+      });
+
+      it('throws WrongTypeError when the key holds a string', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar');
+        expect(() => store.rpop('foo')).toThrow(WrongTypeError);
+      });
+    });
+
+    describe('lrange', () => {
+      it('returns the full list with 0 -1', () => {
+        const store = new DataStore();
+        store.rpush('mylist', ['a', 'b', 'c']);
+        expect(store.lrange('mylist', 0, -1)).toEqual(['a', 'b', 'c']);
+      });
+
+      it('returns a sub-range', () => {
+        const store = new DataStore();
+        store.rpush('mylist', ['a', 'b', 'c', 'd']);
+        expect(store.lrange('mylist', 1, 2)).toEqual(['b', 'c']);
+      });
+
+      it('supports negative indices counting from the end', () => {
+        const store = new DataStore();
+        store.rpush('mylist', ['a', 'b', 'c', 'd']);
+        expect(store.lrange('mylist', -2, -1)).toEqual(['c', 'd']);
+        expect(store.lrange('mylist', -100, -1)).toEqual(['a', 'b', 'c', 'd']);
+      });
+
+      it('clamps a stop index beyond the end of the list', () => {
+        const store = new DataStore();
+        store.rpush('mylist', ['a', 'b']);
+        expect(store.lrange('mylist', 0, 100)).toEqual(['a', 'b']);
+      });
+
+      it('returns an empty array when start > stop', () => {
+        const store = new DataStore();
+        store.rpush('mylist', ['a', 'b', 'c']);
+        expect(store.lrange('mylist', 2, 1)).toEqual([]);
+      });
+
+      it('returns an empty array for a key that does not exist', () => {
+        const store = new DataStore();
+        expect(store.lrange('missing', 0, -1)).toEqual([]);
+      });
+
+      it('throws WrongTypeError when the key holds a string', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar');
+        expect(() => store.lrange('foo', 0, -1)).toThrow(WrongTypeError);
+      });
+    });
+
+    describe('llen', () => {
+      it('returns the number of elements', () => {
+        const store = new DataStore();
+        store.rpush('mylist', ['a', 'b', 'c']);
+        expect(store.llen('mylist')).toBe(3);
+      });
+
+      it('returns 0 for a key that does not exist', () => {
+        const store = new DataStore();
+        expect(store.llen('missing')).toBe(0);
+      });
+
+      it('throws WrongTypeError when the key holds a string', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar');
+        expect(() => store.llen('foo')).toThrow(WrongTypeError);
+      });
+    });
+  });
+
+  describe('cross-type behavior', () => {
+    it('get() throws WrongTypeError when the key holds a list', () => {
+      const store = new DataStore();
+      store.rpush('mylist', ['a']);
+      expect(() => store.get('mylist')).toThrow(WrongTypeError);
+    });
+
+    it('set() overwrites a list key with a string, discarding the list', () => {
+      const store = new DataStore();
+      store.rpush('mylist', ['a', 'b']);
+      store.set('mylist', 'now a string');
+      expect(store.get('mylist')).toBe('now a string');
+      // The key is a string now, so a list operation correctly rejects it —
+      // confirms the old list data is gone, not just shadowed.
+      expect(() => store.llen('mylist')).toThrow(WrongTypeError);
+    });
+
+    it('del() and exists() work regardless of value type', () => {
+      const store = new DataStore();
+      store.rpush('mylist', ['a']);
+      expect(store.exists(['mylist'])).toBe(1);
+      expect(store.del(['mylist'])).toBe(1);
+      expect(store.exists(['mylist'])).toBe(0);
+    });
   });
 });

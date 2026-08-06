@@ -4,8 +4,15 @@
 // strings, per the RESP client-command convention) and a DataStore, and
 // returns the RespValue reply to send back. Knows nothing about sockets or
 // buffering — that's the TCP server's job.
-import { bulkString, error, integer, simpleString, type RespValue } from '../protocol/respTypes.js';
-import { type DataStore } from '../store/dataStore.js';
+import {
+  array,
+  bulkString,
+  error,
+  integer,
+  simpleString,
+  type RespValue,
+} from '../protocol/respTypes.js';
+import { type DataStore, WrongTypeError } from '../store/dataStore.js';
 
 type CommandHandler = (store: DataStore, args: string[]) => RespValue;
 
@@ -23,12 +30,20 @@ const COMMANDS: Record<string, CommandDefinition> = {
   GET: { minArgs: 1, maxArgs: 1, handler: handleGet },
   DEL: { minArgs: 1, maxArgs: null, handler: handleDel },
   EXISTS: { minArgs: 1, maxArgs: null, handler: handleExists },
+  LPUSH: { minArgs: 2, maxArgs: null, handler: handleLpush },
+  RPUSH: { minArgs: 2, maxArgs: null, handler: handleRpush },
+  LPOP: { minArgs: 1, maxArgs: 1, handler: handleLpop },
+  RPOP: { minArgs: 1, maxArgs: 1, handler: handleRpop },
+  LRANGE: { minArgs: 3, maxArgs: 3, handler: handleLrange },
+  LLEN: { minArgs: 1, maxArgs: 1, handler: handleLlen },
 };
 
 /**
  * Dispatches one parsed RESP request against `store` and returns the
- * RespValue reply. Never throws for expected protocol/argument problems —
- * those come back as a RESP error value, exactly as a real client would see.
+ * RespValue reply. Never throws for expected protocol/argument/type
+ * problems — those come back as a RESP error value, exactly as a real
+ * client would see (including WRONGTYPE, when a handler hits a key that
+ * holds a different data type).
  */
 export function dispatch(store: DataStore, request: RespValue): RespValue {
   const args = toCommandArgs(request);
@@ -54,7 +69,14 @@ export function dispatch(store: DataStore, request: RespValue): RespValue {
     return error(`ERR wrong number of arguments for '${commandName.toLowerCase()}' command`);
   }
 
-  return definition.handler(store, commandArgs);
+  try {
+    return definition.handler(store, commandArgs);
+  } catch (err) {
+    if (err instanceof WrongTypeError) {
+      return error(err.message);
+    }
+    throw err; // an unexpected bug, not a normal command-level error — don't hide it
+  }
 }
 
 /** Extracts command name + arguments as plain strings, or null if the shape is invalid. */
@@ -136,4 +158,59 @@ function handleDel(store: DataStore, args: string[]): RespValue {
 
 function handleExists(store: DataStore, args: string[]): RespValue {
   return integer(store.exists(args));
+}
+
+function handleLpush(store: DataStore, args: string[]): RespValue {
+  const key = args[0];
+  if (key === undefined) {
+    return error("ERR wrong number of arguments for 'lpush' command");
+  }
+  return integer(store.lpush(key, args.slice(1)));
+}
+
+function handleRpush(store: DataStore, args: string[]): RespValue {
+  const key = args[0];
+  if (key === undefined) {
+    return error("ERR wrong number of arguments for 'rpush' command");
+  }
+  return integer(store.rpush(key, args.slice(1)));
+}
+
+function handleLpop(store: DataStore, args: string[]): RespValue {
+  const key = args[0];
+  if (key === undefined) {
+    return error("ERR wrong number of arguments for 'lpop' command");
+  }
+  return bulkString(store.lpop(key));
+}
+
+function handleRpop(store: DataStore, args: string[]): RespValue {
+  const key = args[0];
+  if (key === undefined) {
+    return error("ERR wrong number of arguments for 'rpop' command");
+  }
+  return bulkString(store.rpop(key));
+}
+
+function handleLrange(store: DataStore, args: string[]): RespValue {
+  const key = args[0];
+  const rawStart = args[1];
+  const rawStop = args[2];
+  if (key === undefined || rawStart === undefined || rawStop === undefined) {
+    return error("ERR wrong number of arguments for 'lrange' command");
+  }
+  if (!/^-?\d+$/.test(rawStart) || !/^-?\d+$/.test(rawStop)) {
+    return error('ERR value is not an integer or out of range');
+  }
+
+  const values = store.lrange(key, Number(rawStart), Number(rawStop));
+  return array(values.map((value) => bulkString(value)));
+}
+
+function handleLlen(store: DataStore, args: string[]): RespValue {
+  const key = args[0];
+  if (key === undefined) {
+    return error("ERR wrong number of arguments for 'llen' command");
+  }
+  return integer(store.llen(key));
 }
