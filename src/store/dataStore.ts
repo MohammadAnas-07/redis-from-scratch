@@ -20,7 +20,13 @@ export interface ListEntry {
   expiresAt: number | null;
 }
 
-export type StoredEntry = StringEntry | ListEntry;
+export interface HashEntry {
+  type: 'hash';
+  value: Map<string, string>;
+  expiresAt: number | null;
+}
+
+export type StoredEntry = StringEntry | ListEntry | HashEntry;
 
 /** Thrown when a command targets a key that currently holds a different data type. */
 export class WrongTypeError extends Error {
@@ -125,7 +131,79 @@ export class DataStore {
     return entry.value.length;
   }
 
+  // ---- hashes ----
+
+  /** Sets each field=value pair on the hash at `key`. Creates the hash if `key` doesn't exist. Returns how many fields were newly added (not updated). */
+  hset(key: string, fields: Array<[string, string]>): number {
+    const hash = this.getOrCreateHash(key);
+    let added = 0;
+    for (const [field, value] of fields) {
+      if (!hash.value.has(field)) added++;
+      hash.value.set(field, value);
+    }
+    return added;
+  }
+
+  /** Returns the value of `field` in the hash at `key`, or null if the hash or field doesn't exist. */
+  hget(key: string, field: string): string | null {
+    const entry = this.data.get(key);
+    if (entry === undefined) return null;
+    if (entry.type !== 'hash') throw new WrongTypeError();
+    return entry.value.get(field) ?? null;
+  }
+
+  /** Deletes each of `fields` from the hash at `key`. Returns how many actually existed. Removes the key entirely once its hash empties. */
+  hdel(key: string, fields: string[]): number {
+    const entry = this.data.get(key);
+    if (entry === undefined) return 0;
+    if (entry.type !== 'hash') throw new WrongTypeError();
+
+    let deleted = 0;
+    for (const field of fields) {
+      if (entry.value.delete(field)) deleted++;
+    }
+    if (entry.value.size === 0) {
+      this.data.delete(key);
+    }
+    return deleted;
+  }
+
+  /** Returns all [field, value] pairs in the hash at `key`, or an empty array if it doesn't exist. */
+  hgetall(key: string): Array<[string, string]> {
+    const entry = this.data.get(key);
+    if (entry === undefined) return [];
+    if (entry.type !== 'hash') throw new WrongTypeError();
+    return [...entry.value.entries()];
+  }
+
+  /** Returns whether `field` exists in the hash at `key`. */
+  hexists(key: string, field: string): boolean {
+    const entry = this.data.get(key);
+    if (entry === undefined) return false;
+    if (entry.type !== 'hash') throw new WrongTypeError();
+    return entry.value.has(field);
+  }
+
+  /** Returns the number of fields in the hash at `key`, or 0 if it doesn't exist. */
+  hlen(key: string): number {
+    const entry = this.data.get(key);
+    if (entry === undefined) return 0;
+    if (entry.type !== 'hash') throw new WrongTypeError();
+    return entry.value.size;
+  }
+
   // ---- shared internals ----
+
+  private getOrCreateHash(key: string): HashEntry {
+    const entry = this.data.get(key);
+    if (entry === undefined) {
+      const hash: HashEntry = { type: 'hash', value: new Map(), expiresAt: null };
+      this.data.set(key, hash);
+      return hash;
+    }
+    if (entry.type !== 'hash') throw new WrongTypeError();
+    return entry;
+  }
 
   private getOrCreateList(key: string): ListEntry {
     const entry = this.data.get(key);

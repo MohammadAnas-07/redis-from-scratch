@@ -265,11 +265,197 @@ describe('DataStore', () => {
     });
   });
 
+  describe('hashes', () => {
+    describe('hset', () => {
+      it('creates a hash and returns how many fields were newly added', () => {
+        const store = new DataStore();
+        expect(store.hset('myhash', [['field1', 'a']])).toBe(1);
+      });
+
+      it('counts multiple new fields set in one call', () => {
+        const store = new DataStore();
+        expect(
+          store.hset('myhash', [
+            ['field1', 'a'],
+            ['field2', 'b'],
+          ]),
+        ).toBe(2);
+      });
+
+      it('does not count an overwritten field as newly added', () => {
+        const store = new DataStore();
+        store.hset('myhash', [['field1', 'a']]);
+        expect(store.hset('myhash', [['field1', 'b']])).toBe(0);
+        expect(store.hget('myhash', 'field1')).toBe('b');
+      });
+
+      it('counts a mix of new and overwritten fields correctly', () => {
+        const store = new DataStore();
+        store.hset('myhash', [['field1', 'a']]);
+        expect(
+          store.hset('myhash', [
+            ['field1', 'z'],
+            ['field2', 'b'],
+          ]),
+        ).toBe(1);
+      });
+
+      it('throws WrongTypeError when the key holds a string', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar');
+        expect(() => store.hset('foo', [['field1', 'a']])).toThrow(WrongTypeError);
+      });
+
+      it('throws WrongTypeError when the key holds a list', () => {
+        const store = new DataStore();
+        store.rpush('mylist', ['a']);
+        expect(() => store.hset('mylist', [['field1', 'a']])).toThrow(WrongTypeError);
+      });
+    });
+
+    describe('hget', () => {
+      it('returns the value for an existing field', () => {
+        const store = new DataStore();
+        store.hset('myhash', [['field1', 'a']]);
+        expect(store.hget('myhash', 'field1')).toBe('a');
+      });
+
+      it('returns null for a missing field on an existing hash', () => {
+        const store = new DataStore();
+        store.hset('myhash', [['field1', 'a']]);
+        expect(store.hget('myhash', 'missing')).toBeNull();
+      });
+
+      it('returns null for a key that does not exist', () => {
+        const store = new DataStore();
+        expect(store.hget('missing', 'field1')).toBeNull();
+      });
+
+      it('throws WrongTypeError when the key holds a string', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar');
+        expect(() => store.hget('foo', 'field1')).toThrow(WrongTypeError);
+      });
+    });
+
+    describe('hdel', () => {
+      it('deletes existing fields and returns the count removed', () => {
+        const store = new DataStore();
+        store.hset('myhash', [
+          ['field1', 'a'],
+          ['field2', 'b'],
+        ]);
+        expect(store.hdel('myhash', ['field1', 'missing'])).toBe(1);
+        expect(store.hget('myhash', 'field1')).toBeNull();
+        expect(store.hget('myhash', 'field2')).toBe('b');
+      });
+
+      it('returns 0 for a key that does not exist', () => {
+        const store = new DataStore();
+        expect(store.hdel('missing', ['field1'])).toBe(0);
+      });
+
+      it('removes the key once the hash becomes empty', () => {
+        const store = new DataStore();
+        store.hset('myhash', [['only', 'a']]);
+        expect(store.hdel('myhash', ['only'])).toBe(1);
+        expect(store.size).toBe(0);
+        expect(store.hget('myhash', 'only')).toBeNull();
+      });
+
+      it('throws WrongTypeError when the key holds a string', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar');
+        expect(() => store.hdel('foo', ['field1'])).toThrow(WrongTypeError);
+      });
+    });
+
+    describe('hgetall', () => {
+      it('returns all field/value pairs', () => {
+        const store = new DataStore();
+        store.hset('myhash', [
+          ['field1', 'a'],
+          ['field2', 'b'],
+        ]);
+        expect(store.hgetall('myhash')).toEqual([
+          ['field1', 'a'],
+          ['field2', 'b'],
+        ]);
+      });
+
+      it('returns an empty array for a key that does not exist', () => {
+        const store = new DataStore();
+        expect(store.hgetall('missing')).toEqual([]);
+      });
+
+      it('throws WrongTypeError when the key holds a string', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar');
+        expect(() => store.hgetall('foo')).toThrow(WrongTypeError);
+      });
+    });
+
+    describe('hexists', () => {
+      it('returns true for an existing field', () => {
+        const store = new DataStore();
+        store.hset('myhash', [['field1', 'a']]);
+        expect(store.hexists('myhash', 'field1')).toBe(true);
+      });
+
+      it('returns false for a missing field or key', () => {
+        const store = new DataStore();
+        store.hset('myhash', [['field1', 'a']]);
+        expect(store.hexists('myhash', 'missing')).toBe(false);
+        expect(store.hexists('missing', 'field1')).toBe(false);
+      });
+
+      it('throws WrongTypeError when the key holds a string', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar');
+        expect(() => store.hexists('foo', 'field1')).toThrow(WrongTypeError);
+      });
+    });
+
+    describe('hlen', () => {
+      it('returns the number of fields', () => {
+        const store = new DataStore();
+        store.hset('myhash', [
+          ['field1', 'a'],
+          ['field2', 'b'],
+        ]);
+        expect(store.hlen('myhash')).toBe(2);
+      });
+
+      it('returns 0 for a key that does not exist', () => {
+        const store = new DataStore();
+        expect(store.hlen('missing')).toBe(0);
+      });
+
+      it('throws WrongTypeError when the key holds a string', () => {
+        const store = new DataStore();
+        store.set('foo', 'bar');
+        expect(() => store.hlen('foo')).toThrow(WrongTypeError);
+      });
+    });
+  });
+
   describe('cross-type behavior', () => {
     it('get() throws WrongTypeError when the key holds a list', () => {
       const store = new DataStore();
       store.rpush('mylist', ['a']);
       expect(() => store.get('mylist')).toThrow(WrongTypeError);
+    });
+
+    it('get() throws WrongTypeError when the key holds a hash', () => {
+      const store = new DataStore();
+      store.hset('myhash', [['field1', 'a']]);
+      expect(() => store.get('myhash')).toThrow(WrongTypeError);
+    });
+
+    it('lpush() throws WrongTypeError when the key holds a hash', () => {
+      const store = new DataStore();
+      store.hset('myhash', [['field1', 'a']]);
+      expect(() => store.lpush('myhash', ['x'])).toThrow(WrongTypeError);
     });
 
     it('set() overwrites a list key with a string, discarding the list', () => {
@@ -280,6 +466,14 @@ describe('DataStore', () => {
       // The key is a string now, so a list operation correctly rejects it —
       // confirms the old list data is gone, not just shadowed.
       expect(() => store.llen('mylist')).toThrow(WrongTypeError);
+    });
+
+    it('set() overwrites a hash key with a string, discarding the hash', () => {
+      const store = new DataStore();
+      store.hset('myhash', [['field1', 'a']]);
+      store.set('myhash', 'now a string');
+      expect(store.get('myhash')).toBe('now a string');
+      expect(() => store.hlen('myhash')).toThrow(WrongTypeError);
     });
 
     it('del() and exists() work regardless of value type', () => {

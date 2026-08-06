@@ -115,7 +115,8 @@ redis-from-scratch/
 │   ├── integration/             # Spins up the real server, talks to it over a real socket
 │   │   ├── tcpServer.test.ts    # Transport/connection-lifecycle behavior
 │   │   ├── coreCommands.test.ts # Real RESP commands end-to-end (PING/SET/GET/DEL/EXISTS)
-│   │   └── listCommands.test.ts # Real RESP list commands end-to-end, incl. WRONGTYPE
+│   │   ├── listCommands.test.ts # Real RESP list commands end-to-end, incl. WRONGTYPE
+│   │   └── hashCommands.test.ts # Real RESP hash commands end-to-end, incl. WRONGTYPE
 │   └── benchmark/
 │       └── .gitkeep             # Scripts comparing this server's throughput/latency to real Redis
 ├── ARCHITECTURE.md
@@ -233,7 +234,15 @@ every chunk. Nothing below is implemented yet except where marked.
       EXISTS done in `feature/core-commands`; EXPIRE/TTL/KEYS/TYPE still
       pending (this is also where SET's stored `expiresAt` will start
       being enforced)
-- [ ] Hash commands (HSET, HGET, HDEL, HGETALL, ...)
+- [x] Hash commands (HSET, HGET, HDEL, HGETALL, HEXISTS, HLEN) — all six
+      done in `feature/hashes`, backed by a new `HashEntry` type in
+      `DataStore` (a `Map<string, string>` per key) alongside
+      `StringEntry`/`ListEntry`. HSET returns the count of _newly added_
+      fields, not total fields touched, matching real Redis. A key is
+      removed once HDEL empties its hash, matching the List/LPOP
+      precedent. HINCRBY/HMGET/HKEYS/HVALS/etc. still pending. Reuses the
+      same WRONGTYPE mechanism as Lists (dispatch()'s centralized
+      try/catch on `WrongTypeError`) — no per-command duplication
 - [x] List commands (LPUSH, RPUSH, LPOP, RPOP, LRANGE, LLEN, ...) — all six
       done in `feature/lists`, backed by a new `ListEntry` type in
       `DataStore` alongside `StringEntry`. LPOP/RPOP don't support the
