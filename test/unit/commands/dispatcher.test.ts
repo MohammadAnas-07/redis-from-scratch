@@ -768,5 +768,38 @@ describe('dispatch', () => {
     it('is false for an empty command array', () => {
       expect(isWriteCommand(array([]))).toBe(false);
     });
+
+    it('is false for SAVE — it triggers a snapshot but does not itself mutate the store', () => {
+      expect(isWriteCommand(cmd('SAVE'))).toBe(false);
+    });
+  });
+
+  describe('SAVE', () => {
+    it('errors when no save function is provided in the context', () => {
+      const store = new DataStore();
+      const reply = dispatch(store, cmd('SAVE'));
+      expect(reply.type).toBe('error');
+    });
+
+    it('errors when dispatched with no context at all (matches production default)', () => {
+      const store = new DataStore();
+      const reply = dispatch(store, cmd('SAVE'), {});
+      expect(reply.type).toBe('error');
+    });
+
+    it('calls context.save with the store and replies +OK when a save function is provided', () => {
+      const store = new DataStore();
+      const calls: DataStore[] = [];
+      const reply = dispatch(store, cmd('SAVE'), { save: (s) => calls.push(s) });
+
+      expect(reply).toEqual(simpleString('OK'));
+      expect(calls).toEqual([store]);
+    });
+
+    it('rejects any arguments', () => {
+      const store = new DataStore();
+      const reply = dispatch(store, cmd('SAVE', 'extra'), { save: () => {} });
+      expect(reply.type).toBe('error');
+    });
   });
 });

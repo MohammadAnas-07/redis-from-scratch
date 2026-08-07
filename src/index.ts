@@ -1,8 +1,10 @@
 // Entry point: reads config and boots the TCP server.
-import { dispatch, isWriteCommand } from './commands/dispatcher.js';
+import { dispatch, isWriteCommand, type DispatchContext } from './commands/dispatcher.js';
 import { loadConfig } from './config/config.js';
 import { ExpiryEngine } from './expiry/expiryEngine.js';
 import { AofLog } from './persistence/aof.js';
+import { loadPersistedState, Snapshot } from './persistence/snapshot.js';
+import { SnapshotScheduler } from './persistence/snapshotScheduler.js';
 import { type RespValue } from './protocol/respTypes.js';
 import { TcpServer } from './server/tcpServer.js';
 import { DataStore } from './store/dataStore.js';
@@ -12,16 +14,32 @@ async function main(): Promise<void> {
   const store = new DataStore();
   const expiryEngine = new ExpiryEngine(store);
   const aofLog = new AofLog(config.aofPath, (message) => console.log(`[aof] ${message}`));
-
-  // Rebuild in-memory state from disk before accepting any connections.
-  aofLog.replay((request) => {
-    dispatch(store, request);
+  const snapshot = new Snapshot(config.snapshotPath, (message) =>
+    console.log(`[snapshot] ${message}`),
+  );
+  const snapshotScheduler = new SnapshotScheduler(store, snapshot, {
+    writeThreshold: config.snapshotWriteThreshold,
+    intervalMs: config.snapshotIntervalMs,
   });
 
+  // Rebuild in-memory state from disk before accepting any connections.
+  // Precedence: the snapshot wins only if it exists and the AOF is
+  // missing or older; otherwise the AOF (if present) is replayed. See
+  // ARCHITECTURE.md and src/persistence/snapshot.ts for the full rule.
+  const source = loadPersistedState(store, snapshot, aofLog, (request) => {
+    dispatch(store, request);
+  });
+  console.log(`[startup] restored state from: ${source}`);
+
+  const dispatchContext: DispatchContext = {
+    save: (s) => snapshot.save(s),
+  };
+
   const dispatchAndPersist = (request: RespValue): RespValue => {
-    const reply = dispatch(store, request);
+    const reply = dispatch(store, request, dispatchContext);
     if (reply.type !== 'error' && isWriteCommand(request)) {
       aofLog.append(request);
+      snapshotScheduler.recordWrite();
     }
     return reply;
   };
@@ -33,6 +51,7 @@ async function main(): Promise<void> {
   });
 
   expiryEngine.start();
+  snapshotScheduler.start();
   await server.listen();
 
   let shuttingDown = false;
@@ -42,6 +61,7 @@ async function main(): Promise<void> {
 
     console.log(`received ${signal}, closing connections and shutting down...`);
     expiryEngine.stop();
+    snapshotScheduler.stop();
     server
       .close()
       .then(() => {

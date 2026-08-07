@@ -63,9 +63,11 @@ foreseeable roadmap:
   strings), looks it up in a command table, validates arity/arguments,
   and invokes the corresponding handler against the data store.
 - **Persistence (AOF + snapshotting)** — Append-Only File: logs every
-  write command so state can be replayed on restart. Snapshotting:
-  periodic point-in-time dump of the whole dataset (our own format, not
-  RDB-compatible) so AOF replay on startup can be bounded/fast.
+  write command so state can be replayed on restart. Snapshotting: a
+  `SAVE` command (plus a basic background trigger) dumps the whole
+  dataset to disk as JSON (our own format, not RDB-compatible). At
+  startup, one or the other is loaded — never both — per the precedence
+  rule in section 7's Snapshotting checklist entry.
 - **Pub/sub** — channel subscription registry; `PUBLISH` looks up
   subscribed connections for a channel and pushes messages directly to
   their sockets, independent of the normal request/response command
@@ -91,7 +93,8 @@ redis-from-scratch/
 │   │   └── dispatcher.ts       # Command table lookup, arity/arg validation, handler invocation
 │   ├── persistence/
 │   │   ├── aof.ts              # Append-only write log + replay on startup
-│   │   └── snapshot.ts         # Point-in-time full-dataset snapshot dump/load
+│   │   ├── snapshot.ts         # Point-in-time full-dataset snapshot dump/load + AOF-vs-snapshot startup precedence
+│   │   └── snapshotScheduler.ts # Background save trigger: every N writes or every M ms
 │   ├── pubsub/
 │   │   └── pubsub.ts           # Channel subscription registry and message fan-out
 │   ├── expiry/
@@ -114,7 +117,9 @@ redis-from-scratch/
 │   │   ├── expiry/
 │   │   │   └── expiryEngine.test.ts
 │   │   ├── persistence/
-│   │   │   └── aof.test.ts
+│   │   │   ├── aof.test.ts
+│   │   │   ├── snapshot.test.ts
+│   │   │   └── snapshotScheduler.test.ts
 │   │   └── config.test.ts
 │   ├── integration/             # Spins up the real server, talks to it over a real socket
 │   │   ├── tcpServer.test.ts    # Transport/connection-lifecycle behavior
@@ -123,7 +128,8 @@ redis-from-scratch/
 │   │   ├── hashCommands.test.ts # Real RESP hash commands end-to-end, incl. WRONGTYPE
 │   │   ├── setCommands.test.ts  # Real RESP set commands end-to-end, incl. WRONGTYPE
 │   │   ├── expiry.test.ts       # EXPIRE/TTL/PERSIST end-to-end, incl. passive expiry with no sweep running
-│   │   └── persistence.test.ts  # Write, simulate a restart, verify state restored from the AOF
+│   │   ├── persistence.test.ts  # Write, simulate a restart, verify state restored from the AOF
+│   │   └── snapshot.test.ts     # SAVE end-to-end + AOF-vs-snapshot precedence across a simulated restart
 │   └── benchmark/
 │       └── .gitkeep             # Scripts comparing this server's throughput/latency to real Redis
 ├── ARCHITECTURE.md
@@ -308,7 +314,31 @@ every chunk. Nothing below is implemented yet except where marked.
       rewrite/compaction, and a relative EXPIRE/PEXPIRE replays as a
       relative command, so its TTL clock restarts from replay time
       rather than preserving the original absolute expiry
-- [ ] Snapshotting (dump/load full dataset)
+- [x] Snapshotting (dump/load full dataset) — done in `feature/persistence-snapshot`.
+- [x] Snapshot save/load: `Snapshot` (`src/persistence/snapshot.ts`) serializes the whole
+      `DataStore` to a JSON file via new `dumpAll()`/`restoreAll()` methods on `DataStore`
+      (Map/Set converted to plain arrays; already-expired keys are skipped on dump). New `SAVE`
+      command triggers it — `dispatch()` gained an optional third `context` parameter
+      (`DispatchContext`, `{ save?: (store) => void }`) purely for this; existing handlers didn't
+      need to change, since a function with fewer declared parameters than a type's signature is
+      still assignable to it in TS. `SAVE` is `isWrite: false` — it doesn't mutate the store, so
+      it's never appended to the AOF itself.
+- [x] AOF-vs-snapshot precedence at startup: `loadPersistedState()` (same file) loads the
+      snapshot only if it exists and the AOF either doesn't exist or is strictly older than the
+      snapshot (`aofMtime < snapshotMtime`); otherwise it replays the AOF if that exists; if
+      neither exists, the store just starts empty. On a tie (equal mtimes) the AOF wins. Exactly
+      one of the two is ever used, never both. This is a simplified single-mtime comparison, not
+      real Redis's separate persistence-mode configuration.
+- [x] Background save trigger: new `SnapshotScheduler` (`src/persistence/snapshotScheduler.ts`),
+      mirroring `ExpiryEngine`'s start/stop/unref'd-interval shape. Two independent, configurable
+      triggers — after N writes (`SNAPSHOT_WRITE_THRESHOLD`, default 100) or every M ms
+      (`SNAPSHOT_INTERVAL_MS`, default 60s), whichever comes first — both just call the same
+      synchronous `Snapshot.save()`. Explicitly **not** a reimplementation of real Redis's RDB
+      save-point rules (multiple combined `save <seconds> <changes>` points, backed by a forked
+      copy-on-write child process so saving never blocks the event loop) — this blocks the event
+      loop for the duration of the JSON write, fine at this project's target dataset sizes and
+      explicitly out of scope to fix (see non-goals). New env vars: `SNAPSHOT_PATH` (default
+      `./data/dump.snapshot`), `SNAPSHOT_WRITE_THRESHOLD`, `SNAPSHOT_INTERVAL_MS`.
 
 ### Stretch / later
 

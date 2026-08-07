@@ -14,7 +14,23 @@ import {
 } from '../protocol/respTypes.js';
 import { type DataStore, WrongTypeError } from '../store/dataStore.js';
 
-type CommandHandler = (store: DataStore, args: string[]) => RespValue;
+/**
+ * Optional side-effecting dependencies a handler may need beyond the
+ * store itself. Currently just SAVE's snapshot trigger. Left out (`{}`)
+ * in most callers, including nearly every existing test — SAVE simply
+ * errors if no `save` function was provided, rather than requiring every
+ * other command to know or care about persistence.
+ */
+export interface DispatchContext {
+  /** Triggers an immediate full-dataset snapshot save. Wired by index.ts; absent in most tests. */
+  save?: (store: DataStore) => void;
+}
+
+// Handlers that don't need the context simply declare fewer parameters
+// than this type allows — TypeScript permits that (a function callable
+// with fewer arguments than a type's signature is still assignable to
+// it), so only handleSave below actually uses the third parameter.
+type CommandHandler = (store: DataStore, args: string[], context: DispatchContext) => RespValue;
 
 interface CommandDefinition {
   /** Minimum number of arguments *after* the command name. */
@@ -54,6 +70,7 @@ const COMMANDS: Record<string, CommandDefinition> = {
   TTL: { minArgs: 1, maxArgs: 1, handler: handleTtl, isWrite: false },
   PTTL: { minArgs: 1, maxArgs: 1, handler: handlePttl, isWrite: false },
   PERSIST: { minArgs: 1, maxArgs: 1, handler: handlePersist, isWrite: true },
+  SAVE: { minArgs: 0, maxArgs: 0, handler: handleSave, isWrite: false },
 };
 
 /**
@@ -61,9 +78,15 @@ const COMMANDS: Record<string, CommandDefinition> = {
  * RespValue reply. Never throws for expected protocol/argument/type
  * problems — those come back as a RESP error value, exactly as a real
  * client would see (including WRONGTYPE, when a handler hits a key that
- * holds a different data type).
+ * holds a different data type). `context` supplies optional
+ * side-effecting dependencies (currently just SAVE's snapshot trigger);
+ * omit it and SAVE will error instead of silently doing nothing.
  */
-export function dispatch(store: DataStore, request: RespValue): RespValue {
+export function dispatch(
+  store: DataStore,
+  request: RespValue,
+  context: DispatchContext = {},
+): RespValue {
   const args = toCommandArgs(request);
   if (args === null) {
     return error('ERR Protocol error: expected a request as an array of bulk strings');
@@ -88,7 +111,7 @@ export function dispatch(store: DataStore, request: RespValue): RespValue {
   }
 
   try {
-    return definition.handler(store, commandArgs);
+    return definition.handler(store, commandArgs, context);
   } catch (err) {
     if (err instanceof WrongTypeError) {
       return error(err.message);
@@ -411,4 +434,12 @@ function handlePersist(store: DataStore, args: string[]): RespValue {
     return error("ERR wrong number of arguments for 'persist' command");
   }
   return integer(store.persist(key) ? 1 : 0);
+}
+
+function handleSave(store: DataStore, _args: string[], context: DispatchContext): RespValue {
+  if (context.save === undefined) {
+    return error('ERR SAVE is not available: no snapshot persistence configured');
+  }
+  context.save(store);
+  return simpleString('OK');
 }
