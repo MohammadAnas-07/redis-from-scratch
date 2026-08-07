@@ -74,9 +74,21 @@ describe('expiry commands (end-to-end over a real socket)', () => {
   });
 
   it('PEXPIRE and PTTL round-trip in milliseconds', async () => {
-    await sendCommand(socket, ['SET', 'foo', 'bar']);
-    expect(await sendCommand(socket, ['PEXPIRE', 'foo', '60000'])).toEqual(integer(1));
-    expect(await sendCommand(socket, ['PTTL', 'foo'])).toEqual(integer(60000));
+    // Fake timers freeze Date.now() so the elapsed real time between the
+    // PEXPIRE and PTTL round-trips (a few ms under load) can't shave a
+    // millisecond off the expected value — this test was flaky under load
+    // for exactly that reason before. The socket is already connected
+    // (from the real-timer beforeEach above), and socket I/O is
+    // event-driven, not timer-driven, so faking timers here doesn't
+    // affect it.
+    vi.useFakeTimers();
+    try {
+      await sendCommand(socket, ['SET', 'foo', 'bar']);
+      expect(await sendCommand(socket, ['PEXPIRE', 'foo', '60000'])).toEqual(integer(1));
+      expect(await sendCommand(socket, ['PTTL', 'foo'])).toEqual(integer(60000));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('TTL/PTTL return -2 for a missing key and -1 for a key with no expiry', async () => {
