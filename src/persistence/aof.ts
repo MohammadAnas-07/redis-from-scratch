@@ -15,7 +15,7 @@
 //    counting from replay time rather than preserving the original
 //    absolute expiry (real Redis rewrites these to PEXPIREAT in the AOF
 //    specifically to avoid this).
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { parseValue } from '../protocol/respParser.js';
 import { encodeResp } from '../protocol/respSerializer.js';
@@ -98,5 +98,11 @@ export class AofLog {
     }
 
     return { replayedCount, truncated };
+  }
+
+  /** Last-modified time of the AOF file in ms since epoch, or null if it doesn't exist. Used to decide AOF-vs-snapshot precedence at startup (see Snapshot.loadPersistedState). */
+  mtimeMs(): number | null {
+    if (!existsSync(this.filePath)) return null;
+    return statSync(this.filePath).mtimeMs;
   }
 }

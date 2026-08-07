@@ -43,6 +43,16 @@ export interface SetEntry {
 
 export type StoredEntry = StringEntry | ListEntry | HashEntry | SetEntry;
 
+/**
+ * A key's entry in a JSON-serializable shape (Map/Set replaced with
+ * plain arrays), used by Snapshot to dump/restore the whole store.
+ */
+export type SerializedEntry =
+  | { key: string; type: 'string'; value: string; expiresAt: number | null }
+  | { key: string; type: 'list'; value: string[]; expiresAt: number | null }
+  | { key: string; type: 'hash'; value: Array<[string, string]>; expiresAt: number | null }
+  | { key: string; type: 'set'; value: string[]; expiresAt: number | null };
+
 /** Thrown when a command targets a key that currently holds a different data type. */
 export class WrongTypeError extends Error {
   constructor() {
@@ -325,6 +335,82 @@ export class DataStore {
     if (entry === undefined) return 0;
     if (entry.type !== 'set') throw new WrongTypeError();
     return entry.value.size;
+  }
+
+  // ---- snapshotting ----
+
+  /**
+   * Returns every currently-live key's entry in a JSON-serializable
+   * shape, for Snapshot to write to disk. Skips keys that have already
+   * passed their TTL (best-effort — passive expiry cleans up anything
+   * missed here once the snapshot is reloaded and the key is touched).
+   */
+  dumpAll(): SerializedEntry[] {
+    const now = Date.now();
+    const result: SerializedEntry[] = [];
+
+    for (const [key, entry] of this.data) {
+      if (entry.expiresAt !== null && entry.expiresAt <= now) continue;
+
+      switch (entry.type) {
+        case 'string':
+          result.push({ key, type: 'string', value: entry.value, expiresAt: entry.expiresAt });
+          break;
+        case 'list':
+          result.push({ key, type: 'list', value: [...entry.value], expiresAt: entry.expiresAt });
+          break;
+        case 'hash':
+          result.push({
+            key,
+            type: 'hash',
+            value: [...entry.value.entries()],
+            expiresAt: entry.expiresAt,
+          });
+          break;
+        case 'set':
+          result.push({ key, type: 'set', value: [...entry.value], expiresAt: entry.expiresAt });
+          break;
+      }
+    }
+
+    return result;
+  }
+
+  /** Restores entries produced by a prior dumpAll(), overwriting any current entry for the same key. Used when loading a snapshot at startup. */
+  restoreAll(entries: SerializedEntry[]): void {
+    for (const entry of entries) {
+      switch (entry.type) {
+        case 'string':
+          this.data.set(entry.key, {
+            type: 'string',
+            value: entry.value,
+            expiresAt: entry.expiresAt,
+          });
+          break;
+        case 'list':
+          this.data.set(entry.key, {
+            type: 'list',
+            value: [...entry.value],
+            expiresAt: entry.expiresAt,
+          });
+          break;
+        case 'hash':
+          this.data.set(entry.key, {
+            type: 'hash',
+            value: new Map(entry.value),
+            expiresAt: entry.expiresAt,
+          });
+          break;
+        case 'set':
+          this.data.set(entry.key, {
+            type: 'set',
+            value: new Set(entry.value),
+            expiresAt: entry.expiresAt,
+          });
+          break;
+      }
+      this.trackExpiry(entry.key, entry.expiresAt);
+    }
   }
 
   // ---- shared internals ----
