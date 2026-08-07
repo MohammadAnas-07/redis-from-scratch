@@ -113,6 +113,8 @@ redis-from-scratch/
 │   │   │   └── dispatcher.test.ts
 │   │   ├── expiry/
 │   │   │   └── expiryEngine.test.ts
+│   │   ├── persistence/
+│   │   │   └── aof.test.ts
 │   │   └── config.test.ts
 │   ├── integration/             # Spins up the real server, talks to it over a real socket
 │   │   ├── tcpServer.test.ts    # Transport/connection-lifecycle behavior
@@ -120,7 +122,8 @@ redis-from-scratch/
 │   │   ├── listCommands.test.ts # Real RESP list commands end-to-end, incl. WRONGTYPE
 │   │   ├── hashCommands.test.ts # Real RESP hash commands end-to-end, incl. WRONGTYPE
 │   │   ├── setCommands.test.ts  # Real RESP set commands end-to-end, incl. WRONGTYPE
-│   │   └── expiry.test.ts       # EXPIRE/TTL/PERSIST end-to-end, incl. passive expiry with no sweep running
+│   │   ├── expiry.test.ts       # EXPIRE/TTL/PERSIST end-to-end, incl. passive expiry with no sweep running
+│   │   └── persistence.test.ts  # Write, simulate a restart, verify state restored from the AOF
 │   └── benchmark/
 │       └── .gitkeep             # Scripts comparing this server's throughput/latency to real Redis
 ├── ARCHITECTURE.md
@@ -283,7 +286,28 @@ every chunk. Nothing below is implemented yet except where marked.
       generic/type-agnostic, work on any key type
 - [ ] Pub/sub (SUBSCRIBE, UNSUBSCRIBE, PUBLISH)
 - [ ] Transactions (MULTI/EXEC/DISCARD/WATCH)
-- [ ] AOF persistence (write log + startup replay)
+- [x] AOF persistence (write log + startup replay) — done in
+      `feature/persistence-aof`. `AofLog` (`src/persistence/aof.ts`)
+      appends every successful write command to disk as its original
+      RESP-encoded bytes (an array of bulk strings — the exact wire
+      format a client sent), and replays them through the same
+      `dispatch()` used for live traffic before the server starts
+      accepting connections. Which commands count as "write" is a new
+      `isWrite` flag on each `CommandDefinition` in the dispatcher,
+      exposed as `isWriteCommand()`; read-only commands and failed
+      writes (e.g. WRONGTYPE) are never appended. AOF path is
+      configurable via the `AOF_PATH` env var (default
+      `./data/appendonly.aof`). A corrupted or truncated tail is
+      logged and replay stops there rather than crashing or losing the
+      valid commands before it — reuses a newly-exported single-value
+      parse function from `respParser.ts` (`parseValue`) rather than
+      RespParser's streaming `push()`, since `push()` discards
+      already-parsed values when a later one is malformed, which is
+      wrong for replay. Known simplifications vs real Redis: synchronous
+      per-write fs append (no configurable fsync policy), no AOF
+      rewrite/compaction, and a relative EXPIRE/PEXPIRE replays as a
+      relative command, so its TTL clock restarts from replay time
+      rather than preserving the original absolute expiry
 - [ ] Snapshotting (dump/load full dataset)
 
 ### Stretch / later

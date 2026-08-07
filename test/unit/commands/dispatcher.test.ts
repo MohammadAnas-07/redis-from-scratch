@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dispatch } from '../../../src/commands/dispatcher.js';
+import { dispatch, isWriteCommand } from '../../../src/commands/dispatcher.js';
 import {
   array,
   bulkString,
@@ -707,6 +707,66 @@ describe('dispatch', () => {
       vi.advanceTimersByTime(10_500);
       expect(dispatch(store, cmd('LRANGE', 'mylist', '0', '-1'))).toEqual(array([]));
       expect(dispatch(store, cmd('LLEN', 'mylist'))).toEqual(integer(0));
+    });
+  });
+
+  describe('isWriteCommand', () => {
+    it('is true for commands that can mutate the store', () => {
+      for (const name of [
+        'SET',
+        'DEL',
+        'LPUSH',
+        'RPUSH',
+        'LPOP',
+        'RPOP',
+        'HSET',
+        'HDEL',
+        'SADD',
+        'SREM',
+        'EXPIRE',
+        'PEXPIRE',
+        'PERSIST',
+      ]) {
+        expect(isWriteCommand(cmd(name, 'key', 'value'))).toBe(true);
+      }
+    });
+
+    it('is false for read-only commands', () => {
+      for (const name of [
+        'PING',
+        'GET',
+        'EXISTS',
+        'LRANGE',
+        'LLEN',
+        'HGET',
+        'HGETALL',
+        'HEXISTS',
+        'HLEN',
+        'SMEMBERS',
+        'SISMEMBER',
+        'SCARD',
+        'TTL',
+        'PTTL',
+      ]) {
+        expect(isWriteCommand(cmd(name, 'key', 'value'))).toBe(false);
+      }
+    });
+
+    it('is case-insensitive, matching dispatch()', () => {
+      expect(isWriteCommand(cmd('set', 'foo', 'bar'))).toBe(true);
+      expect(isWriteCommand(cmd('get', 'foo'))).toBe(false);
+    });
+
+    it('is false for an unknown command', () => {
+      expect(isWriteCommand(cmd('NOPE'))).toBe(false);
+    });
+
+    it('is false for a malformed (non-array) request', () => {
+      expect(isWriteCommand(simpleString('SET'))).toBe(false);
+    });
+
+    it('is false for an empty command array', () => {
+      expect(isWriteCommand(array([]))).toBe(false);
     });
   });
 });
