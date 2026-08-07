@@ -1,7 +1,9 @@
 // Entry point: reads config and boots the TCP server.
-import { dispatch } from './commands/dispatcher.js';
+import { dispatch, isWriteCommand } from './commands/dispatcher.js';
 import { loadConfig } from './config/config.js';
 import { ExpiryEngine } from './expiry/expiryEngine.js';
+import { AofLog } from './persistence/aof.js';
+import { type RespValue } from './protocol/respTypes.js';
 import { TcpServer } from './server/tcpServer.js';
 import { DataStore } from './store/dataStore.js';
 
@@ -9,10 +11,25 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const store = new DataStore();
   const expiryEngine = new ExpiryEngine(store);
+  const aofLog = new AofLog(config.aofPath, (message) => console.log(`[aof] ${message}`));
+
+  // Rebuild in-memory state from disk before accepting any connections.
+  aofLog.replay((request) => {
+    dispatch(store, request);
+  });
+
+  const dispatchAndPersist = (request: RespValue): RespValue => {
+    const reply = dispatch(store, request);
+    if (reply.type !== 'error' && isWriteCommand(request)) {
+      aofLog.append(request);
+    }
+    return reply;
+  };
+
   const server = new TcpServer({
     port: config.port,
     log: (message) => console.log(`[tcp] ${message}`),
-    dispatch: (request) => dispatch(store, request),
+    dispatch: dispatchAndPersist,
   });
 
   expiryEngine.start();

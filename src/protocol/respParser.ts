@@ -23,7 +23,7 @@ const LF = 0x0a;
 
 const INTEGER_RE = /^-?\d+$/;
 
-interface ParseResult {
+export interface ParseResult {
   value: RespValue;
   /** Offset into the buffer right after this value's bytes. */
   next: number;
@@ -128,8 +128,14 @@ function parseArray(buf: Buffer, start: number): ParseResult | null {
  * Attempts to parse one complete RESP value starting at `offset`.
  * Returns null when the buffer doesn't yet contain a complete value (wait
  * for more data). Throws RespProtocolError on malformed input.
+ *
+ * Exported (in addition to the streaming RespParser class below) for
+ * callers that already have a whole buffer in hand and want to walk it
+ * one value at a time themselves — e.g. AOF replay, which needs to stop
+ * cleanly at the last valid command instead of discarding everything
+ * already parsed the way RespParser.push() does on error.
  */
-function parseValue(buf: Buffer, offset: number): ParseResult | null {
+export function parseValue(buf: Buffer, offset: number): ParseResult | null {
   if (offset >= buf.length) return null;
 
   switch (buf[offset]) {

@@ -22,36 +22,38 @@ interface CommandDefinition {
   /** Maximum number of arguments after the command name, or null for unlimited. */
   maxArgs: number | null;
   handler: CommandHandler;
+  /** Whether this command can mutate the store — determines what gets appended to the AOF. */
+  isWrite: boolean;
 }
 
 const COMMANDS: Record<string, CommandDefinition> = {
-  PING: { minArgs: 0, maxArgs: 1, handler: handlePing },
-  SET: { minArgs: 2, maxArgs: 4, handler: handleSet },
-  GET: { minArgs: 1, maxArgs: 1, handler: handleGet },
-  DEL: { minArgs: 1, maxArgs: null, handler: handleDel },
-  EXISTS: { minArgs: 1, maxArgs: null, handler: handleExists },
-  LPUSH: { minArgs: 2, maxArgs: null, handler: handleLpush },
-  RPUSH: { minArgs: 2, maxArgs: null, handler: handleRpush },
-  LPOP: { minArgs: 1, maxArgs: 1, handler: handleLpop },
-  RPOP: { minArgs: 1, maxArgs: 1, handler: handleRpop },
-  LRANGE: { minArgs: 3, maxArgs: 3, handler: handleLrange },
-  LLEN: { minArgs: 1, maxArgs: 1, handler: handleLlen },
-  HSET: { minArgs: 3, maxArgs: null, handler: handleHset },
-  HGET: { minArgs: 2, maxArgs: 2, handler: handleHget },
-  HDEL: { minArgs: 2, maxArgs: null, handler: handleHdel },
-  HGETALL: { minArgs: 1, maxArgs: 1, handler: handleHgetall },
-  HEXISTS: { minArgs: 2, maxArgs: 2, handler: handleHexists },
-  HLEN: { minArgs: 1, maxArgs: 1, handler: handleHlen },
-  SADD: { minArgs: 2, maxArgs: null, handler: handleSadd },
-  SREM: { minArgs: 2, maxArgs: null, handler: handleSrem },
-  SMEMBERS: { minArgs: 1, maxArgs: 1, handler: handleSmembers },
-  SISMEMBER: { minArgs: 2, maxArgs: 2, handler: handleSismember },
-  SCARD: { minArgs: 1, maxArgs: 1, handler: handleScard },
-  EXPIRE: { minArgs: 2, maxArgs: 2, handler: handleExpire },
-  PEXPIRE: { minArgs: 2, maxArgs: 2, handler: handlePexpire },
-  TTL: { minArgs: 1, maxArgs: 1, handler: handleTtl },
-  PTTL: { minArgs: 1, maxArgs: 1, handler: handlePttl },
-  PERSIST: { minArgs: 1, maxArgs: 1, handler: handlePersist },
+  PING: { minArgs: 0, maxArgs: 1, handler: handlePing, isWrite: false },
+  SET: { minArgs: 2, maxArgs: 4, handler: handleSet, isWrite: true },
+  GET: { minArgs: 1, maxArgs: 1, handler: handleGet, isWrite: false },
+  DEL: { minArgs: 1, maxArgs: null, handler: handleDel, isWrite: true },
+  EXISTS: { minArgs: 1, maxArgs: null, handler: handleExists, isWrite: false },
+  LPUSH: { minArgs: 2, maxArgs: null, handler: handleLpush, isWrite: true },
+  RPUSH: { minArgs: 2, maxArgs: null, handler: handleRpush, isWrite: true },
+  LPOP: { minArgs: 1, maxArgs: 1, handler: handleLpop, isWrite: true },
+  RPOP: { minArgs: 1, maxArgs: 1, handler: handleRpop, isWrite: true },
+  LRANGE: { minArgs: 3, maxArgs: 3, handler: handleLrange, isWrite: false },
+  LLEN: { minArgs: 1, maxArgs: 1, handler: handleLlen, isWrite: false },
+  HSET: { minArgs: 3, maxArgs: null, handler: handleHset, isWrite: true },
+  HGET: { minArgs: 2, maxArgs: 2, handler: handleHget, isWrite: false },
+  HDEL: { minArgs: 2, maxArgs: null, handler: handleHdel, isWrite: true },
+  HGETALL: { minArgs: 1, maxArgs: 1, handler: handleHgetall, isWrite: false },
+  HEXISTS: { minArgs: 2, maxArgs: 2, handler: handleHexists, isWrite: false },
+  HLEN: { minArgs: 1, maxArgs: 1, handler: handleHlen, isWrite: false },
+  SADD: { minArgs: 2, maxArgs: null, handler: handleSadd, isWrite: true },
+  SREM: { minArgs: 2, maxArgs: null, handler: handleSrem, isWrite: true },
+  SMEMBERS: { minArgs: 1, maxArgs: 1, handler: handleSmembers, isWrite: false },
+  SISMEMBER: { minArgs: 2, maxArgs: 2, handler: handleSismember, isWrite: false },
+  SCARD: { minArgs: 1, maxArgs: 1, handler: handleScard, isWrite: false },
+  EXPIRE: { minArgs: 2, maxArgs: 2, handler: handleExpire, isWrite: true },
+  PEXPIRE: { minArgs: 2, maxArgs: 2, handler: handlePexpire, isWrite: true },
+  TTL: { minArgs: 1, maxArgs: 1, handler: handleTtl, isWrite: false },
+  PTTL: { minArgs: 1, maxArgs: 1, handler: handlePttl, isWrite: false },
+  PERSIST: { minArgs: 1, maxArgs: 1, handler: handlePersist, isWrite: true },
 };
 
 /**
@@ -93,6 +95,19 @@ export function dispatch(store: DataStore, request: RespValue): RespValue {
     }
     throw err; // an unexpected bug, not a normal command-level error — don't hide it
   }
+}
+
+/**
+ * Whether `request` names a write command (one that can mutate the
+ * store) — used by the AOF wiring in index.ts to decide what to persist.
+ * Returns false for anything malformed or unrecognized; only a request
+ * that dispatch() would actually route to a write handler counts.
+ */
+export function isWriteCommand(request: RespValue): boolean {
+  const args = toCommandArgs(request);
+  const commandName = args?.[0];
+  if (commandName === undefined) return false;
+  return COMMANDS[commandName.toUpperCase()]?.isWrite ?? false;
 }
 
 /** Extracts command name + arguments as plain strings, or null if the shape is invalid. */
